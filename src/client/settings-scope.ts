@@ -178,7 +178,7 @@ class BridgeScopeController<T> implements SettingsScope<T> {
    *  Path ops may address plain-object fields (e.g. `channelSecrets.<id>`),
    *  but never navigate *inside* arrays — write array fields wholesale. */
   mutateOps(ops: SettingsOp[]): Promise<void> {
-    return this.enqueue(() => this.writeOps(ops))
+    return this.enqueue(() => this.writeOps(ops, undefined, true))
   }
 
   async dispose(): Promise<void> {
@@ -222,7 +222,7 @@ class BridgeScopeController<T> implements SettingsScope<T> {
     this.accept(view, writable)
   }
 
-  private async writeOps(ops: SettingsOp[], expectedRevision?: number): Promise<void> {
+  private async writeOps(ops: SettingsOp[], expectedRevision?: number, throwOnFailure = false): Promise<void> {
     const revision = expectedRevision ?? this.getSnapshot().revision
     let response
     try {
@@ -231,14 +231,19 @@ class BridgeScopeController<T> implements SettingsScope<T> {
         ops,
         ...revision === undefined ? {} : { expectedRevision: revision },
       })
-    } catch {
+    } catch (error) {
       await this.read()
+      if (throwOnFailure && !this.disposed) throw error
       return
     }
-    if (!response.result.ok || this.disposed) {
+    if (!response.result.ok) {
       await this.read()
+      if (throwOnFailure && !this.disposed) {
+        throw new Error(`settings mutation rejected: ${response.result.message}`)
+      }
       return
     }
+    if (this.disposed) return
     this.accept(response.result.value as BridgeView, undefined)
   }
 

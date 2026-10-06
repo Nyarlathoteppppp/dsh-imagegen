@@ -95,6 +95,41 @@ function isQwenImage(model: string): boolean {
   return modelFamily(model) === 'qwen'
 }
 
+/** ModelScope's OpenAI-compatible image inference API always queues tasks. */
+function isModelScopeInference(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === 'api-inference.modelscope.cn'
+  } catch {
+    return false
+  }
+}
+
+/** Normalize ModelScope's documented service-origin URL to its OpenAI API root. */
+function normalizeModelScopeBaseUrl(baseUrl: string, apiUrlFull: boolean): string {
+  if (apiUrlFull || !isModelScopeInference(baseUrl)) return baseUrl
+  try {
+    const url = new URL(baseUrl)
+    if (url.pathname === '' || url.pathname === '/') url.pathname = '/v1'
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return baseUrl
+  }
+}
+
+/** Recover the versioned API base when a channel stores the exact generation URL. */
+function modelScopeTaskBaseUrl(baseUrl: string, apiUrlFull: boolean): string {
+  if (!apiUrlFull) return baseUrl
+  try {
+    const url = new URL(baseUrl)
+    url.pathname = url.pathname.replace(/\/images\/(?:generations|edits)\/?$/i, '')
+    url.search = ''
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return baseUrl
+  }
+}
+
 /** Whether the model is MiniMax image-01, which speaks MiniMax's native
  *  `/image_generation` contract (NOT OpenAI-compatible): `aspect_ratio`,
  *  `subject_reference` for image-to-image, `data.image_base64[]` results, and
@@ -439,6 +474,7 @@ async function normalizeItem(
 
 /** Expand a provider image item whose URL may be a string or an array. */
 function imageItemsOf(value: unknown): Array<Record<string, unknown>> {
+  if (typeof value === 'string' && value.trim() !== '') return [{ url: value.trim() }]
   if (value === null || typeof value !== 'object') return []
   const item = value as Record<string, unknown>
   if (Array.isArray(item.url)) {
@@ -606,7 +642,7 @@ function chatErrorTextOf(payload: Record<string, unknown>): string | undefined {
 }
 
 const ASYNC_PENDING_STATUSES = new Set(['submitted', 'pending', 'processing', 'running', 'in_progress', 'queued'])
-const ASYNC_COMPLETED_STATUSES = new Set(['completed', 'succeeded', 'success', 'done'])
+const ASYNC_COMPLETED_STATUSES = new Set(['completed', 'succeeded', 'succeed', 'success', 'done'])
 const ASYNC_FAILED_STATUSES = new Set(['failed', 'failure', 'cancelled', 'canceled', 'error'])
 const ASYNC_POLL_MAX_MS = 240_000
 const ASYNC_POLL_REQUEST_TIMEOUT_MS = 30_000
@@ -659,7 +695,7 @@ function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Poll one apib/apimart-style provider task until it yields image records.
+ * Poll an asynchronous provider task until it yields image records (including ModelScope response fields).
  * The total deadline is shared by every poll and the final image downloads;
  * local task cancellation propagates through every request and sleep.
  */
@@ -668,6 +704,7 @@ async function pollAsyncTask(
   upstream: UpstreamConfig,
   taskId: string,
   signal?: AbortSignal,
+  modelScope = false,
 ): Promise<Array<Record<string, unknown>>> {
   const deadline = Date.now() + ASYNC_POLL_MAX_MS
   let delay = 1000
@@ -679,7 +716,10 @@ async function pollAsyncTask(
       try {
         response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
           method: 'GET',
-          headers: { authorization: `Bearer ${upstream.apiKey.trim()}` },
+          headers: {
+            authorization: `Bearer ${upstream.apiKey.trim()}`,
+            ...(modelScope ? { 'X-ModelScope-Task-Type': 'image_generation' } : {}),
+          },
           signal: budget.signal,
         })
       } catch (error) {
@@ -701,7 +741,7 @@ async function pollAsyncTask(
       const data = record.data
       const statusRecord = Array.isArray(data) ? data[0] : data !== null && typeof data === 'object' ? data : record
       const statusValue = statusRecord !== null && typeof statusRecord === 'object'
-        ? (statusRecord as Record<string, unknown>).status
+        ? ((statusRecord as Record<string, unknown>).task_status ?? (statusRecord as Record<string, unknown>).status)
         : undefined
       const status = typeof statusValue === 'string' ? statusValue.toLowerCase() : ''
       if (ASYNC_FAILED_STATUSES.has(status)) {
@@ -710,7 +750,12 @@ async function pollAsyncTask(
       const nested = statusRecord !== null && typeof statusRecord === 'object' ? statusRecord as Record<string, unknown> : record
       const result = nested.result ?? (nested.output !== null && typeof nested.output === 'object' ? (nested.output as Record<string, unknown>).result : undefined) ?? record.result
       const resultRecord = result !== null && typeof result === 'object' ? result as Record<string, unknown> : undefined
-      const images = resultRecord?.images ?? (nested.images ?? record.images)
+      const images = resultRecord?.images
+        ?? resultRecord?.output_images
+        ?? nested.images
+        ?? nested.output_images
+        ?? record.images
+        ?? record.output_images
       if (ASYNC_COMPLETED_STATUSES.has(status) || images !== undefined) {
         const items = Array.isArray(images) ? images.flatMap(imageItemsOf) : imageItemsOf(images)
         if (items.length > 0) return items
@@ -739,8 +784,10 @@ async function requestOneImage(
   params: ReturnType<typeof effectiveParams>,
   signal?: AbortSignal,
 ): Promise<GeneratedImage[]> {
+  const modelScope = isModelScopeInference(baseUrl)
   const headers: Record<string, string> = {
     authorization: `Bearer ${upstream.apiKey.trim()}`,
+    ...(modelScope ? { 'X-ModelScope-Async-Mode': 'true' } : {}),
   }
   let body: BodyInit
   if (request.mode === 'edit') {
@@ -858,6 +905,13 @@ async function requestOneImage(
     }
 
     const record = payload as Record<string, unknown>
+    const modelScopeTaskId = modelScope && typeof record.task_id === 'string' ? record.task_id.trim() : ''
+    if (modelScopeTaskId !== '') {
+      const taskBaseUrl = modelScopeTaskBaseUrl(baseUrl, upstream.apiUrlFull === true)
+      const taskItems = await pollAsyncTask(taskBaseUrl, upstream, modelScopeTaskId, signal, true)
+      if (taskItems.length === 0) throw new ImageGenError('魔搭异步任务已完成，但没有图片结果', 'upstream-empty')
+      return Promise.all(taskItems.flatMap(imageItemsOf).map(item => normalizeItem(item, upstream, signal)))
+    }
     const data = dataRecordsOf(record)
     if (data === undefined) {
       throw new ImageGenError('上游响应缺少 data 数组', 'upstream-invalid')
@@ -1191,7 +1245,8 @@ async function generateChatCompletionImages(
  * `tools[0].n`), then the results are flattened in order.
  */
 export async function generateImage(upstream: UpstreamConfig, request: GenerateRequest, options: { signal?: AbortSignal } = {}): Promise<GenerateResult> {
-  const baseUrl = upstream.apiUrl.trim().replace(/\/+$/, '')
+  const configuredBaseUrl = upstream.apiUrl.trim().replace(/\/+$/, '')
+  const baseUrl = normalizeModelScopeBaseUrl(configuredBaseUrl, upstream.apiUrlFull === true)
   if (baseUrl === '') throw new ImageGenError('api_url 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
   if (upstream.apiKey.trim() === '') throw new ImageGenError('api_key 未配置：请先在「设置 → 生图配置」中填写', 'config-missing')
   if (resolveChannelProtocol(baseUrl, upstream.protocol) === 'chat-completions') {
@@ -1201,7 +1256,9 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
   // use the generic OpenAI-compatible request shape instead of native family
   // routing or appending another path.
   if (upstream.apiUrlFull !== true) {
-    if (isQwenImage(wireModel(request))) return generateQwenImage(baseUrl, upstream, request, options)
+    // ModelScope exposes Qwen models through the OpenAI-compatible image API,
+    // not DashScope's native multimodal-generation contract.
+    if (!isModelScopeInference(baseUrl) && isQwenImage(wireModel(request))) return generateQwenImage(baseUrl, upstream, request, options)
     if (isMiniMaxImage(wireModel(request))) return generateMiniMaxImage(baseUrl, upstream, request, options)
     if (request.mode === 'edit' && isZhipuImage(wireModel(request))) {
       throw new ImageGenError('智谱 GLM-Image 当前仅支持文生图，请切换到文生图模式或选择支持图生图的模型', 'edit-unsupported')

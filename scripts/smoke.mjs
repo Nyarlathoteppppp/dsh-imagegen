@@ -78,6 +78,9 @@ await check('A1 host exports the plugin contract', () => {
   assert.equal(host.subscriptionOauthRef('openrouter'), 'DSH_IMAGEGEN_OPENROUTER_OAUTH_1')
   assert.equal(typeof host.generateImage, 'function')
 })
+await check('A1b Git dependency prepare hook builds distributable artifacts', () => {
+  assert.equal(packageJson.scripts.prepare, 'tsdown')
+})
 await check('A2 Config schema validates + marks apiKey secret', () => {
   const resolvedRefs = host.Config({ apiUrl: 'https://x/v1', apiKey: 'sk-1' })
   const resolved = Object.fromEntries(Object.entries(resolvedRefs).map(([key, value]) => [
@@ -814,7 +817,12 @@ await check('B10 async two-step providers submit, poll, and flatten URL arrays',
     if (url.pathname === '/v1/images/generations') {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       const taskId = `task-${submissions.length + 1}`
-      submissions.push({ taskId, body, authorization: req.headers.authorization })
+      submissions.push({
+        taskId,
+        body,
+        authorization: req.headers.authorization,
+        modelScopeHeader: req.headers['x-modelscope-async-mode'],
+      })
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ data: [{ status: 'submitted', task_id: taskId }] }))
       return
@@ -844,9 +852,56 @@ await check('B10 async two-step providers submit, poll, and flatten URL arrays',
     assert.equal(submissions.length, 2, 'one upstream task is submitted for each requested image')
     assert.equal(result.images.length, 4, 'each completed task URL array is flattened')
     assert.ok(submissions.every(item => item.authorization === 'Bearer async-key'))
+    assert.ok(submissions.every(item => item.modelScopeHeader === undefined), 'ordinary gateways do not receive ModelScope headers')
     assert.ok([...polls.values()].every(count => count >= 2), 'submitted tasks are polled until completed')
   } finally {
     await new Promise(resolve => asyncProvider.close(resolve))
+  }
+})
+
+await check('B10b ModelScope inference submits and polls the OpenAI-compatible Qwen task', async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  const imageDataUrl = `data:image/png;base64,${pngBytes.toString('base64')}`
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input)
+    const method = String(init.method ?? 'GET').toUpperCase()
+    const headers = new Headers(init.headers)
+    calls.push({ url, method, headers, body: typeof init.body === 'string' ? init.body : undefined })
+    if (method === 'POST' && url === 'https://api-inference.modelscope.cn/v1/images/generations') {
+      return new Response(JSON.stringify({ task_id: 'modelscope-task-1' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    if (method === 'GET' && url === 'https://api-inference.modelscope.cn/v1/tasks/modelscope-task-1') {
+      return new Response(JSON.stringify({ task_status: 'SUCCEED', output_images: [imageDataUrl] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    throw new Error(`Unexpected ModelScope request: ${method} ${url}`)
+  }
+  try {
+    const result = await host.generateImage(
+      { apiUrl: 'https://api-inference.modelscope.cn/', apiKey: 'modelscope-key' },
+      { mode: 'text', model: 'qwen-image-2.1', upstream: 'Qwen/Qwen-Image-2.1', prompt: 'a calm lake', size: '1:1', quality: 'auto', n: 1, detail: '' },
+    )
+    assert.equal(calls.length, 2, 'submission is followed by one successful task poll')
+    assert.equal(calls[0].url, 'https://api-inference.modelscope.cn/v1/images/generations')
+    assert.equal(calls[0].headers.get('x-modelscope-async-mode'), 'true')
+    assert.equal(calls[0].headers.get('authorization'), 'Bearer modelscope-key')
+    const submitted = JSON.parse(calls[0].body)
+    assert.equal(submitted.model, 'Qwen/Qwen-Image-2.1')
+    assert.equal(submitted.prompt, 'a calm lake')
+    assert.equal(calls[1].url, 'https://api-inference.modelscope.cn/v1/tasks/modelscope-task-1')
+    assert.equal(calls[1].headers.get('x-modelscope-task-type'), 'image_generation')
+    assert.equal(calls[1].headers.get('authorization'), 'Bearer modelscope-key')
+    assert.equal(result.images.length, 1)
+    assert.equal(result.images[0].b64, pngBytes.toString('base64'))
+    assert.equal(result.images[0].mime, 'image/png')
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })
 
@@ -3564,6 +3619,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   }
   const channelSecrets = () => [{ path: ['channelSecrets', 'default'], set: keyState.set }]
   const mutateCalls = []
+  let rejectNextSettingsMutation = false
   const ecommerceSubmissions = []
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
@@ -3643,6 +3699,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.endsWith('/settings/mutate')) {
       const payload = JSON.parse(init.body)
       mutateCalls.push(payload)
+      if (rejectNextSettingsMutation) {
+        rejectNextSettingsMutation = false
+        return {
+          ok: true,
+          json: async () => ({ ok: false, code: 'revision-conflict', message: 'settings changed; reload and retry' }),
+        }
+      }
       for (const op of payload.ops) {
         if (op.path[0] === 'channels' && op.op === 'set') configState.channels = op.value
         if (op.path[0] === 'defaultChannelId' && op.op === 'set') configState.defaultChannelId = op.value
@@ -4278,6 +4341,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       mutateCalls.some(m => m.ops.some(o => o.path[0] === 'channelSecrets' && o.path[1] === 'default' && o.op === 'set' && o.value === 'sk-new')),
       'channel key write sent with the typed value',
     )
+
+    // A rejected host mutation must retain a staged channel key instead of
+    // clearing the only copy from the settings form.
+    face.channels.setChannelKey('default', 'sk-retry')
+    rejectNextSettingsMutation = true
+    await face.channels.commit()
+    const afterRejectedSave = face.hooks.imageGenSettingsCard.getSnapshot()
+    assert.equal(afterRejectedSave.channels.failed, true, 'a rejected batch is surfaced as a channel-save failure')
+    assert.equal(afterRejectedSave.dirty, true, 'a rejected save keeps the form dirty for retry')
+    assert.ok(mutateCalls.at(-1).ops.some(op => op.path[0] === 'channelSecrets' && op.value === 'sk-retry'), 'the rejected request carried the staged token')
+    await face.channels.commit()
+    const afterRetry = face.hooks.imageGenSettingsCard.getSnapshot()
+    assert.equal(afterRetry.channels.failed, false, 'a successful retry clears the failure state')
+    assert.equal(afterRetry.dirty, false, 'a successful retry clears staged edits')
+    assert.ok(mutateCalls.at(-1).ops.some(op => op.path[0] === 'channelSecrets' && op.value === 'sk-retry'), 'retry resends the preserved token')
 
     // Ecommerce submission flow: with the channel key set, confirming the plan
     // fans out one queued task per planned image carrying the set metadata.
