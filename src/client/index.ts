@@ -192,8 +192,8 @@ export function apply(ctx: ClientContext): void {
     try {
       disposers.push(mountSidebarEntry(
         controller,
-        tt('entry.newSession'),
-        tt('entry.newSessionTooltip'),
+        tt('entry.session'),
+        tt('entry.sessionTooltip'),
         tt('entry.image'),
         tt('entry.tooltip'),
       ))
@@ -204,7 +204,7 @@ export function apply(ctx: ClientContext): void {
         const root = document.querySelector('[data-dsh-imagegen-sidebar-root]')
         if (root === null) return
         const labels: Array<[string, string, string]> = [
-          ['new-session', tt('entry.newSession'), tt('entry.newSessionTooltip')],
+          ['session', tt('entry.session'), tt('entry.sessionTooltip')],
           ['image', tt('entry.image'), tt('entry.tooltip')],
         ]
         for (const [tab, label, tooltip] of labels) {

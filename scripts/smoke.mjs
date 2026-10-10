@@ -3390,12 +3390,13 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   assert.equal(tabs.getAttribute('role'), 'tablist')
   assert.deepEqual(
     [...tabs.querySelectorAll('[data-dsh-imagegen-tab]')].map(tab => tab.getAttribute('data-dsh-imagegen-tab')),
-    ['new-session', 'image'],
+    ['session', 'image'],
   )
   const shellButton = jsdomDocument.querySelector('.xUkysG_newSession')
-  assert.equal(shellButton.style.display, 'none', 'the shell button is replaced by the tabs')
-  assert.equal(shellButton.getAttribute('aria-hidden'), 'true')
-  assert.equal(shellButton.tabIndex, -1)
+  assert.equal(shellButton.style.display, '', 'the shell New Session button stays visible: the switcher only moves between the conversation and the studio')
+  assert.equal(shellButton.hasAttribute('aria-hidden'), false)
+  assert.equal(shellButton.tabIndex, 0)
+  assert.equal(shellButton.previousElementSibling, tabs, 'the switcher sits directly above the shell button')
   const brandButton = jsdomDocument.querySelector('.xUkysG_brandButton')
   assert.equal(brandButton.style.display, '', 'the brand button is never hidden')
   assert.equal(brandButton.hasAttribute('aria-hidden'), false)
@@ -3407,19 +3408,19 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
 
   // Tab clicks drive the panel, and the active state follows the panel store.
   tabs.querySelector('[data-dsh-imagegen-tab="image"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
-  tabs.querySelector('[data-dsh-imagegen-tab="new-session"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
-  assert.equal(calls.join(','), 'open,close', 'the image tab opens the studio and the new-session tab closes it')
+  tabs.querySelector('[data-dsh-imagegen-tab="session"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+  assert.equal(calls.join(','), 'open,close', 'the image tab opens the studio and the session tab returns to the conversation without starting one')
   panelOpen = true
   for (const listener of [...listeners]) listener()
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="image"]').hasAttribute('data-active'), true, 'the open panel marks the image tab')
-  assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="new-session"]').hasAttribute('data-active'), false)
+  assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), false)
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)
 
   disposeDesktop()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null, 'the disposer takes the tabs back out')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]'), null, 'the disposer takes the history host back out')
-  assert.equal(shellButton.style.display, '', 'the disposer restores the shell button')
+  assert.equal(shellButton.style.display, '', 'the shell button was never touched, so it survives the unload')
   assert.equal(shellButton.hasAttribute('aria-hidden'), false)
   assert.equal(shellButton.hasAttribute('tabindex'), false)
   assert.equal(desktopRoot.hasAttribute('data-dsh-imagegen-sidebar-root'), false, 'the root marker is cleared on unload')
@@ -3438,7 +3439,8 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   const unknownTabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
   assert.ok(unknownTabs !== null, 'the tabs mount in a shell we have never seen')
   assert.equal(unknownTabs.parentElement.className, 'zzzShell')
-  assert.equal(jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]').style.display, 'none')
+  assert.equal(jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]').style.display, '', 'the shell button stays visible in an unknown shell too')
+  assert.equal(jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]').previousElementSibling, unknownTabs)
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]').parentElement.className, 'zzz_regionArea')
   disposeUnknown()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
@@ -4149,7 +4151,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.ok(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-chat-collapsed'), 'the chat toggle collapses the track again')
     assert.equal(conversationRoot.matches(collapseSelector), true, 'the collapsed chat track drops the conversation root')
-    jsdomDocument.querySelector('[data-dsh-imagegen-tab="new-session"]')
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]')
       .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), false, 'the studio closes again')
