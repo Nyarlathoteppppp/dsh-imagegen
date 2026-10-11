@@ -5,8 +5,8 @@
 export const zh = {
   'entry.label': 'AI 生图',
   'entry.tooltip': 'AI 生图面板（gpt-image-2 / glm-image / grok-imagine-image / nanobanana / seedream 系列）',
-  'entry.newSession': '新会话',
-  'entry.newSessionTooltip': '创建一个新的 DSH 会话',
+  'entry.session': '会话',
+  'entry.sessionTooltip': '返回当前会话界面',
   'entry.image': '生图',
   'entry.settings': '生图配置',
   'panel.title': 'VisioWork',
@@ -877,8 +877,8 @@ export const zh = {
 export const en: Record<keyof typeof zh, string> = {
   'entry.label': 'AI Image',
   'entry.tooltip': 'AI image generation studio (gpt-image-2 / glm-image / grok-imagine-image / nanobanana / seedream family)',
-  'entry.newSession': 'New session',
-  'entry.newSessionTooltip': 'Create a new DSH session',
+  'entry.session': 'Session',
+  'entry.sessionTooltip': 'Back to the current conversation',
   'entry.image': 'Image',
   'entry.settings': 'Image settings',
   'panel.title': 'VisioWork',
@@ -1739,8 +1739,8 @@ export type ImageGenKey = keyof typeof zh
 export const ru: Record<keyof typeof zh, string> = {
   'entry.label': 'ИИ-генерация',
   'entry.tooltip': 'Панель ИИ-генерации изображений (gpt-image-2 / glm-image / grok-imagine-image / nanobanana / seedream)',
-  'entry.newSession': 'Новая сессия',
-  'entry.newSessionTooltip': 'Создать новую сессию DSH',
+  'entry.session': 'Сессия',
+  'entry.sessionTooltip': 'Вернуться к текущей сессии',
   'entry.image': 'Генерация',
   'entry.settings': 'Настройки генерации',
   'panel.title': 'VisioWork',
