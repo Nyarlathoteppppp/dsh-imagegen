@@ -107,9 +107,6 @@ function makeTab(
   return tab
 }
 
-// The shell's New Session button is left untouched, so the plugin no longer
-// hides it and needs no restore path: the switcher is purely additive.
-
 /**
  * Mount or repair the two-tab switcher directly above the shell's New Session
  * button, which stays visible: the switcher only moves between the conversation
@@ -166,8 +163,8 @@ function placeHistoryHost(root: HTMLElement): HTMLDivElement | undefined {
 
 /**
  * Mount the two tabs and self-heal after React rebuilds the sidebar. The
- * shell-owned New Session button is never modified, so unloading the plugin
- * only has to remove what it added.
+ * shell-owned New Session button keeps its native behavior. A temporary marker
+ * preserves its visibility and identifies context clicks across shell layouts.
  */
 export function mountSidebarEntry(
   controller: ImageGenController,
@@ -179,6 +176,7 @@ export function mountSidebarEntry(
   let root: HTMLElement | undefined
   let tabs: HTMLDivElement | undefined
   let historyHost: HTMLDivElement | undefined
+  let markedButton: HTMLButtonElement | undefined
   let warnedUnmounted = false
 
   /**
@@ -225,6 +223,8 @@ export function mountSidebarEntry(
 
   const ensure = (): void => {
     if (root !== undefined && !root.isConnected) {
+      markedButton?.removeAttribute('data-dsh-imagegen-new-session')
+      markedButton = undefined
       root = undefined
       tabs = undefined
       historyHost = undefined
@@ -234,6 +234,11 @@ export function mountSidebarEntry(
     root.dataset.dshImagegenSidebarRoot = ''
     const button = newSessionButton(root)
     if (button === undefined) return
+    if (markedButton !== button) markedButton?.removeAttribute('data-dsh-imagegen-new-session')
+    markedButton = button
+    if (!button.hasAttribute('data-dsh-imagegen-new-session')) {
+      button.setAttribute('data-dsh-imagegen-new-session', '')
+    }
     tabs = placeTabs(root, controller, sessionLabel, sessionTooltip, imageLabel, imageTooltip)
     historyHost = placeHistoryHost(root)
     syncActive()
@@ -250,6 +255,7 @@ export function mountSidebarEntry(
     unsubscribe()
     tabs?.remove()
     historyHost?.remove()
+    markedButton?.removeAttribute('data-dsh-imagegen-new-session')
     if (root !== undefined) delete root.dataset.dshImagegenSidebarRoot
   }
 }

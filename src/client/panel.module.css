@@ -139,10 +139,10 @@ html[data-dsh-imagegen-active]:not([data-dsh-taskboard-active]):not([data-dsh-ss
   display: none !important;
 }
 
-/* The shell can have any number of plugin entries between the New Session
-   tabs and its workspace region. Hide the whole middle run while image
-   generation owns the frame, without relying on a plugin allow-list. */
-html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh-imagegen-session-tabs]):not([class*='logoRow']):not([class*='regionArea']):not([class*='footArea']) {
+/* Keep the Session/Image switcher and the native New Session action visible,
+   including shells that wrap the action in a container. Other plugin entries
+   between the switcher and workspace region stay hidden in the studio. */
+html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh-imagegen-session-tabs]):not([data-dsh-imagegen-new-session]):not(:has([data-dsh-imagegen-new-session])):not([class*='logoRow']):not([class*='regionArea']):not([class*='footArea']) {
   display: none !important;
 }
 
@@ -206,7 +206,7 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   text-overflow: ellipsis;
 }
 
-/* New Session + Image Generation tabs share the shell's top action row. */
+/* Session + Image Generation tabs share the shell's top action row. */
 .sessionTabs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

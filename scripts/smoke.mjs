@@ -3305,6 +3305,7 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     + '<div class="xUkysG_root">'
     + '<div class="xUkysG_logoRow"><button class="xUkysG_brandButton" aria-label="DSH">DSH</button></div>'
     + '<button class="xUkysG_newSession" aria-label="New session">New session</button>'
+    + '<div data-other-sidebar-plugin>Other plugin</div>'
     + '<div class="xUkysG_regionArea"></div>'
     + '</div>'
     + '</div>'
@@ -3383,7 +3384,7 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   // and the brand row on the same ancestor must stay untouched.
   const desktopRoot = findSidebarRoot()
   assert.equal(desktopRoot?.className, 'xUkysG_root', 'the desktop sidebar surface resolves to the wrapper that owns the shell button')
-  const disposeDesktop = mount(controller, 'New session', 'Start a new session', 'Image', 'Open the image studio')
+  const disposeDesktop = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
   const tabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
   assert.ok(tabs !== null, 'the two tabs mount in the desktop shell')
   assert.equal(tabs.parentElement.className, 'xUkysG_root', 'the tabs land where the shell button sits')
@@ -3414,15 +3415,20 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
   for (const listener of [...listeners]) listener()
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="image"]').hasAttribute('data-active'), true, 'the open panel marks the image tab')
   assert.equal(tabs.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), false)
+  jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
+  assert.notEqual(jsdomWindow.getComputedStyle(shellButton).display, 'none', 'the native New Session action stays visible under the shipped studio CSS')
+  assert.equal(jsdomWindow.getComputedStyle(desktopRoot.querySelector('[data-other-sidebar-plugin]')).display, 'none', 'unrelated sidebar plugin entries remain hidden')
+  jsdomDocument.documentElement.removeAttribute('data-dsh-imagegen-active')
   await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(warnings.length, 0, `a mounted sidebar entry logs nothing: ${warnings.join(' | ')}`)
 
   disposeDesktop()
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null, 'the disposer takes the tabs back out')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]'), null, 'the disposer takes the history host back out')
-  assert.equal(shellButton.style.display, '', 'the shell button was never touched, so it survives the unload')
+  assert.equal(shellButton.style.display, '', 'the shell button keeps its native display after unload')
   assert.equal(shellButton.hasAttribute('aria-hidden'), false)
   assert.equal(shellButton.hasAttribute('tabindex'), false)
+  assert.equal(shellButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the temporary action marker is removed on unload')
   assert.equal(desktopRoot.hasAttribute('data-dsh-imagegen-sidebar-root'), false, 'the root marker is cleared on unload')
 
   // --- unknown shell: no marker class and no data hook anywhere, only the brand
@@ -3435,14 +3441,37 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     + '</div>'
   const unknownRoot = findSidebarRoot()
   assert.equal(unknownRoot?.className, 'zzzShell', 'a shell without our markers resolves through the brand row and the button name')
-  const disposeUnknown = mount(controller, 'New session', 'Start a new session', 'Image', 'Open the image studio')
+  const disposeUnknown = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
   const unknownTabs = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
   assert.ok(unknownTabs !== null, 'the tabs mount in a shell we have never seen')
   assert.equal(unknownTabs.parentElement.className, 'zzzShell')
   assert.equal(jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]').style.display, '', 'the shell button stays visible in an unknown shell too')
   assert.equal(jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]').previousElementSibling, unknownTabs)
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]').parentElement.className, 'zzz_regionArea')
+
+  // React can wrap or replace a native action without retaining its CSS class.
+  // Check ancestor visibility as well as the button's own computed display.
+  const unknownButton = jsdomDocument.querySelector('.zzzShell > button[aria-label="New session"]')
+  const actionWrapper = jsdomDocument.createElement('div')
+  unknownRoot.insertBefore(actionWrapper, unknownButton)
+  actionWrapper.append(unknownButton)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-session-tabs]').length, 1, 'repairing a wrapped action never duplicates the switcher')
+  assert.equal(unknownButton.previousElementSibling?.hasAttribute('data-dsh-imagegen-session-tabs'), true, 'the switcher follows the wrapped action')
+  jsdomDocument.documentElement.setAttribute('data-dsh-imagegen-active', '')
+  assert.notEqual(jsdomWindow.getComputedStyle(actionWrapper).display, 'none', 'a wrapper around the native action stays visible')
+  assert.notEqual(jsdomWindow.getComputedStyle(unknownButton).display, 'none', 'an action found only by its accessible name stays visible')
+  const replacementButton = jsdomDocument.createElement('button')
+  replacementButton.setAttribute('aria-label', 'New session')
+  replacementButton.textContent = '+'
+  unknownButton.replaceWith(replacementButton)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.notEqual(jsdomWindow.getComputedStyle(actionWrapper).display, 'none', 'replacing the native action preserves its wrapper visibility')
+  assert.notEqual(jsdomWindow.getComputedStyle(replacementButton).display, 'none', 'the replacement native action stays visible')
+  assert.equal(unknownButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the replaced action loses its temporary marker')
+  jsdomDocument.documentElement.removeAttribute('data-dsh-imagegen-active')
   disposeUnknown()
+  assert.equal(replacementButton.hasAttribute('data-dsh-imagegen-new-session'), false, 'the replacement action is cleaned up on unload')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null)
 
   // --- a shell with no New Session affordance must not be mistaken for one: no
@@ -3453,7 +3482,7 @@ await check('D3 sidebar entry mounts inside desktop and unknown sidebar shells, 
     + '<div class="logoRow"><button class="brandButton" aria-label="Collapse sidebar">SESSION-TITLE-MUST-NOT-BE-LOGGED</button></div>'
     + '<div class="regionArea"></div>'
     + '</div>'
-  const disposeUnmounted = mount(controller, 'New session', 'Start a new session', 'Image', 'Open the image studio')
+  const disposeUnmounted = mount(controller, 'Session', 'Back to the current conversation', 'Image', 'Open the image studio')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]'), null, 'no tabs mount without a shell button to replace')
   assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-history-host]'), null, 'no history host mounts either')
   assert.equal(jsdomDocument.querySelector('.brandButton').style.display, '', 'the brand button is not mistaken for the new-session control')
@@ -3490,6 +3519,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const jsdomWindow = dom.window
   const jsdomDocument = jsdomWindow.document
   let confirmationCalls = 0
+  let nativeNewSessionCalls = 0
+  const nativeNewSession = jsdomDocument.querySelector('.newSession')
+  nativeNewSession.addEventListener('click', () => { nativeNewSessionCalls += 1 })
   jsdomWindow.confirm = () => {
     confirmationCalls += 1
     return false
@@ -4088,7 +4120,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // UI unmounted forever) and the two session tabs must be inserted.
     const entry = jsdomDocument.querySelector('[data-dsh-imagegen-session-tabs]')
     assert.ok(entry !== null, 'session tabs were mounted')
-    assert.equal(entry.querySelectorAll('[data-dsh-imagegen-tab]').length, 2, 'new session and image tabs are present')
+    assert.equal(entry.querySelectorAll('[data-dsh-imagegen-tab]').length, 2, 'session and image tabs are present')
     assert.ok(entry.textContent.includes('生图'), 'image tab label localized')
     assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-entry]'), null, 'standalone image entry was removed')
     const view = jsdomDocument.querySelector('[data-dsh-imagegen-view]')
@@ -4155,6 +4187,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       .dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), false, 'the studio closes again')
+    assert.equal(nativeNewSessionCalls, 0, 'returning to the current conversation never starts a new session')
+
+    // The native action must both create a session and close the studio, even
+    // when the shell exposes no recognizable newSession CSS class.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]').click()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), true)
+    nativeNewSession.className = ''
+    nativeNewSession.click()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(nativeNewSessionCalls, 1, 'the native New Session handler still runs exactly once')
+    assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), false, 'the native action returns from the studio to the conversation')
+    assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), true, 'the switcher follows the native action')
+    nativeNewSession.className = 'newSession'
 
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.

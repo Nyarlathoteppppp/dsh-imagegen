@@ -191,7 +191,7 @@ export function mountPanel(
   }
   // Jump out on sidebar context clicks: clicking a session/workspace row
   // hands the center column back to the conversation. Capture phase.
-  const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'
+  const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"], [data-dsh-imagegen-new-session]'
   const onClickSidebarRow = (event: MouseEvent): void => {
     if (!controller.getSnapshot().panelOpen) return
     const target = event.target as HTMLElement | null
