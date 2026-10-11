@@ -34,6 +34,7 @@ import {
   removeConversationAttachment, CHAT_IMAGE_EVENT,
   type ChatImageEventDetail, type ConversationDraftAttachment, type ConversationService,
 } from './conversation-sync.ts'
+import { Select } from './Select.tsx'
 import css from './panel.module.css'
 
 /** Size options, presented as aspect ratios (auto = let the model decide).
@@ -1970,14 +1971,14 @@ export function ImageGenPanel(props: {
 
       <div className={css.historyFilters}>
         <input className={css.historySearch} value={historyQuery} onChange={event => { setHistoryQuery(event.target.value) }} placeholder={tt('history.search')} aria-label={tt('history.search')} />
-        <select value={historyModelFilter} onChange={event => { setHistoryModelFilter(event.target.value) }} aria-label={tt('history.model')}>
+        <Select value={historyModelFilter} onChange={value => { setHistoryModelFilter(value) }} aria-label={tt('history.model')}>
           <option value="all">{tt('history.allModels')}</option>
           {[...new Set(history.flatMap(entry => modelsOfHistoryEntry(entry)))].map(option => <option key={option} value={option}>{option}</option>)}
-        </select>
-        <select value={historyRatioFilter} onChange={event => { setHistoryRatioFilter(event.target.value) }} aria-label={tt('history.ratio')}>
+        </Select>
+        <Select value={historyRatioFilter} onChange={value => { setHistoryRatioFilter(value) }} aria-label={tt('history.ratio')}>
           <option value="all">{tt('history.allRatios')}</option>
           {[...new Set(history.map(entry => normalizeSize(entry.size)))].map(option => <option key={option} value={option}>{option}</option>)}
-        </select>
+        </Select>
       </div>
 
       {filteredHistory.length === 0 ? (
@@ -2269,16 +2270,16 @@ export function ImageGenPanel(props: {
                       {ecommerceAssets.filter(asset => asset.role !== 'style').map(asset => (
                         <div key={asset.id} className={css.ecommerceAsset} data-ecommerce-asset="">
                           <img src={asset.dataUrl} alt={asset.name} />
-                          <select
+                          <Select
                             value={asset.role}
                             data-ecommerce-asset-role=""
                             aria-label={tt('ecommerce.refSelect')}
-                            onChange={event => setEcommerceAssets(previous => previous.map(item => item.id === asset.id ? { ...item, role: event.target.value as EcommerceAssetRole } : item))}
+                            onChange={value => setEcommerceAssets(previous => previous.map(item => item.id === asset.id ? { ...item, role: value as EcommerceAssetRole } : item))}
                           >
                             {ECOMMERCE_ASSET_ROLES.filter(role => role !== 'style').map(role => (
                               <option key={role} value={role}>{tt(`ecommerce.role.${role}` as never)}</option>
                             ))}
-                          </select>
+                          </Select>
                           <button type="button" aria-label={tt('edit.remove')} onClick={() => { setEcommerceAssets(previous => previous.filter(item => item.id !== asset.id)) }}>×</button>
                         </div>
                       ))}
@@ -2378,13 +2379,13 @@ export function ImageGenPanel(props: {
                   <div className={css.ecommerceParamGrid}>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.platformLabel')}</span>
-                      <select value={ecommerce.platform} onChange={event => setEcommerce(previous => ({ ...previous, platform: event.target.value }))}><option>通用</option><option>淘宝 / 京东</option><option>Amazon</option></select>
+                      <Select value={ecommerce.platform} onChange={value => setEcommerce(previous => ({ ...previous, platform: value }))}><option>通用</option><option>淘宝 / 京东</option><option>Amazon</option></Select>
                     </label>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.languageLabel')}</span>
-                      <select aria-label={tt('ecommerce.languageLabel')} value={ecommerce.language} onChange={event => setEcommerce(previous => ({ ...previous, language: event.target.value }))}>
+                      <Select aria-label={tt('ecommerce.languageLabel')} value={ecommerce.language} onChange={value => setEcommerce(previous => ({ ...previous, language: value }))}>
                         {ECOMMERCE_COPY_LANGUAGES.map(([value, label]) => <option key={value} value={value}>{value === 'custom' ? tt('ecommerce.customLanguageOption') : label}</option>)}
-                      </select>
+                      </Select>
                       {ecommerce.language === 'custom' ? (
                         <input
                           value={ecommerce.customLanguage ?? ''}
@@ -2397,11 +2398,11 @@ export function ImageGenPanel(props: {
                     </label>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.categoryLabel')}</span>
-                      <select value={ecommerce.category} onChange={event => setEcommerce(previous => ({ ...previous, category: event.target.value }))}><option>通用商品</option><option>食品饮料</option><option>美妆个护</option><option>服装配饰</option><option>家居用品</option><option>3C 数码</option></select>
+                      <Select value={ecommerce.category} onChange={value => setEcommerce(previous => ({ ...previous, category: value }))}><option>通用商品</option><option>食品饮料</option><option>美妆个护</option><option>服装配饰</option><option>家居用品</option><option>3C 数码</option></Select>
                     </label>
                     <label className={css.ecommerceField}>
                       <span className={css.ecommerceFieldLabel}>{tt('ecommerce.ratioLabel')}</span>
-                      <select value={ecommerce.size} onChange={event => setEcommerce(previous => ({ ...previous, size: event.target.value }))}>{SIZES.filter(size => size !== 'auto').map(size => <option key={size}>{size}</option>)}</select>
+                      <Select value={ecommerce.size} onChange={value => setEcommerce(previous => ({ ...previous, size: value }))}>{SIZES.filter(size => size !== 'auto').map(size => <option key={size}>{size}</option>)}</Select>
                     </label>
                   </div>
                 </div>
@@ -2444,10 +2445,10 @@ export function ImageGenPanel(props: {
                           {ecommerceSlots.map(slot => (
                             <label key={slot.key} className={css.ecommerceRefRow}>
                               <span>{slot.label}</span>
-                              <select value={slot.refRole ?? 'product'} data-ecommerce-ref-select="" aria-label={`${tt('ecommerce.refSelect')} · ${slot.label}`} onChange={event => setEcommerce(previous => ({ ...previous, slots: previous.slots.map(item => item.key === slot.key ? { ...item, refRole: event.target.value as EcommerceRefRole } : item) }))}>
+                              <Select value={slot.refRole ?? 'product'} data-ecommerce-ref-select="" aria-label={`${tt('ecommerce.refSelect')} · ${slot.label}`} onChange={value => setEcommerce(previous => ({ ...previous, slots: previous.slots.map(item => item.key === slot.key ? { ...item, refRole: value as EcommerceRefRole } : item) }))}>
                                 <option value="none">{tt('ecommerce.refNone')}</option>
                                 {ECOMMERCE_ASSET_ROLES.map(role => <option key={role} value={role}>{tt(`ecommerce.role.${role}` as never)}</option>)}
-                              </select>
+                              </Select>
                             </label>
                           ))}
                         </div>
@@ -2767,10 +2768,10 @@ export function ImageGenPanel(props: {
                       <span aria-hidden="true">▤</span> {tt('gallery.grid')}
                     </button>
                   </div>
-                  <select className={css.gallerySort} value={gallerySort} onChange={event => { setGallerySort(event.target.value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
+                  <Select className={css.gallerySort} value={gallerySort} onChange={value => { setGallerySort(value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
                     <option value="newest">{tt('gallery.newest')}</option>
                     <option value="oldest">{tt('gallery.oldest')}</option>
-                  </select>
+                  </Select>
                   <button type="button" className={css.galleryClear} data-gallery-open-folder="" title={tt('gallery.openFolderHint')} onClick={() => { void api.openDataFolder() }}>{tt('gallery.openFolder')}</button>
                   {gallery.length > 0 ? <button type="button" className={css.galleryClear} data-gallery-clear="" onClick={() => { void clearGalleryAll() }}>{tt('gallery.clear')}</button> : null}
                 </div>

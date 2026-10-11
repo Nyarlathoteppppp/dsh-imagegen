@@ -741,7 +741,7 @@
   line-height: 1.4;
 }
 
-.defaultModelRow select {
+.defaultModelRow [data-dsh-select] {
   width: min(260px, 48%);
 }
 

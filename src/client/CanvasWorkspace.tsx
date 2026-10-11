@@ -21,6 +21,7 @@ import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelP
 import type { ImageModelGroup } from './settings-scope.ts'
 import { CanvasFileBody, CanvasFileOverlay, fileKindLabel, fileKindOfAsset, fileSizeLabel } from './CanvasFilePreview.tsx'
 import { DotFieldBackground, DotGridBackground, FaultyTerminalBackground, FloatingLinesBackground, FlowBackground, GalaxyBackground, LiquidEtherBackground, ShapeGridBackground, SilkBackground, WavesBackground } from './CanvasBackgrounds.tsx'
+import { Select } from './Select.tsx'
 import css from './canvas-workspace.module.css'
 
 type CanvasTool = 'select' | 'pan'
@@ -684,14 +685,14 @@ function SkillConfigForm(props: {
             {field.required === true ? <em className={css.skillConfigRequired}>*</em> : null}
           </span>
           {field.type === 'select'
-            ? <select
+            ? <Select
                 className={css.skillDialogInput}
                 value={draft[field.id] ?? ''}
                 disabled={props.busy || phase !== 'idle'}
-                onChange={event => { setDraft(current => ({ ...current, [field.id]: event.target.value })); setTouched(current => new Set(current).add(field.id)) }}
+                onChange={value => { setDraft(current => ({ ...current, [field.id]: value })); setTouched(current => new Set(current).add(field.id)) }}
               >
                 {field.options?.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
+              </Select>
             : <input
                 className={css.skillDialogInput}
                 type={field.type === 'secret' ? 'password' : 'text'}
@@ -1132,52 +1133,14 @@ function ComposerSelect(props: {
   variant?: 'composer' | 'toolbar'
   onChange: (value: string) => void
 }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number; minWidth: number } | null>(null)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (event: PointerEvent): void => {
-      if (event.target instanceof Element && (buttonRef.current?.contains(event.target) === true || event.target.closest(`.${css.composerSelectMenu}`) !== null)) return
-      setOpen(false)
-    }
-    window.addEventListener('pointerdown', close, true)
-    return () => window.removeEventListener('pointerdown', close, true)
-  }, [open])
-  const selected = props.options.find(option => option.value === props.value) ?? props.options[0]
-  const className = props.variant === 'toolbar' ? css.toolbarSelect : css.composerSelect
-  return <>
-    <button
-      type="button"
-      ref={buttonRef}
-      className={className}
-      data-open={open ? '' : undefined}
-      aria-label={props.ariaLabel}
-      aria-haspopup="listbox"
-      aria-expanded={open}
-      title={props.ariaLabel}
-      onPointerDown={event => event.stopPropagation()}
-      onClick={() => {
-        if (open) { setOpen(false); return }
-        const rect = buttonRef.current?.getBoundingClientRect()
-        if (rect !== undefined) setPosition({ left: rect.left, top: rect.bottom + 6, minWidth: rect.width })
-        setOpen(true)
-      }}
-    >
-      <span className={css.composerSelectValue}>{selected?.label ?? ''}</span>
-      <ChevronDown size={13} strokeWidth={2} aria-hidden="true" />
-    </button>
-    {open && position !== null ? createPortal(<div className={css.composerSelectMenu} style={{ left: position.left, top: position.top, minWidth: position.minWidth }} role="listbox" aria-label={props.ariaLabel}>
-      {props.options.map(option => <button
-        key={option.value}
-        type="button"
-        role="option"
-        aria-selected={option.value === props.value}
-        data-selected={option.value === props.value ? '' : undefined}
-        onClick={() => { props.onChange(option.value); setOpen(false) }}
-      >{option.label}</button>)}
-    </div>, document.body) : null}
-  </>
+  return <Select
+    value={props.value}
+    options={props.options}
+    aria-label={props.ariaLabel}
+    variant={props.variant ?? 'composer'}
+    onPointerDown={event => { event.stopPropagation() }}
+    onChange={props.onChange}
+  />
 }
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element {
@@ -3018,7 +2981,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
       if (element === null || typeof element !== 'object' || typeof element.matches !== 'function') return false
       return (element.matches as (value: string) => boolean)(selector)
     }
-    const isEditingTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'input, textarea, select, [contenteditable="true"]')
+    const isEditingTarget = (target: EventTarget | null): boolean => matchesSelector(target, 'input, textarea, select, [data-dsh-select], [data-dsh-select-menu], [contenteditable="true"]')
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Control') setCtrlPressed(true)
@@ -4129,14 +4092,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps): React.JSX.Element 
 
   return <section ref={rootRef} className={css.root} data-canvas-workspace="">
     <header className={css.topBar} data-canvas-no-zoom="">
-      <select className={css.projectSelect} value={document?.id ?? ''} onChange={event => { void selectProject(event.target.value) }} aria-label={tt('canvas.project')}>
+      <Select className={css.projectSelect} value={document?.id ?? ''} onChange={value => { void selectProject(value) }} aria-label={tt('canvas.project')}>
         {favoriteProjects.length > 0 ? <optgroup label={tt('canvas.favoriteProjects', { count: favoriteProjects.length })}>
           {favoriteProjects.map(project => <option key={project.id} value={project.id}>★ {project.title}</option>)}
         </optgroup> : null}
         {otherProjects.length > 0 ? <optgroup label={tt('canvas.allProjects', { count: otherProjects.length })}>
           {otherProjects.map(project => <option key={project.id} value={project.id}>{project.title}</option>)}
         </optgroup> : null}
-      </select>
+      </Select>
       <IconButton name="new" label={tt('canvas.newCanvas')} onClick={() => { void newCanvas() }} />
       <IconButton
         name={currentFavorite ? 'favoriteFilled' : 'favorite'}

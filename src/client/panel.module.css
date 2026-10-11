@@ -827,7 +827,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .historySearch,
-.historyFilters select,
+.historyFilters [data-dsh-select],
 .gallerySearch {
   min-width: 0;
   min-height: 29px;
@@ -1125,8 +1125,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   color: var(--dsw-alias-label-tertiary);
 }
 
-.ecommerceSection input:not([type="checkbox"]), .ecommerceSection select, .ecommerceSection textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; font: inherit; }
-.ecommerceSection input:not([type="checkbox"]):focus-visible, .ecommerceSection select:focus-visible, .ecommerceSection textarea:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.ecommerceSection input:not([type="checkbox"]), .ecommerceSection [data-dsh-select], .ecommerceSection textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l2); border-radius: 9px; font: inherit; }
+.ecommerceSection input:not([type="checkbox"]):focus-visible, .ecommerceSection [data-dsh-select]:focus-visible, .ecommerceSection textarea:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .ecommerceSection textarea { min-height: 68px; resize: vertical; line-height: 1.5; }
 
 .ecommerceField {
@@ -1304,14 +1304,14 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   border-radius: 5px;
 }
 
-.ecommerceAsset select {
+.ecommerceAsset [data-dsh-select] {
   width: 100%;
   min-width: 0;
   padding: 2px;
   font-size: 10px;
 }
 
-.ecommerceAsset button {
+.ecommerceAsset button:not([data-dsh-select]) {
   position: absolute;
   top: 7px;
   right: 7px;
@@ -1328,7 +1328,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   text-align: center;
 }
 
-.ecommerceAsset button:hover {
+.ecommerceAsset button:not([data-dsh-select]):hover {
   background: rgba(0, 0, 0, 0.8);
 }
 

@@ -24,6 +24,7 @@ import { IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKI
 import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
+import { Select } from './Select.tsx'
 import css from './settings-card.module.css'
 
 /** The global (non-channel) fields this card's staged form edits. */
@@ -652,17 +653,17 @@ export function ImageGenSettingsSection(props: ImageGenSettingsSectionProps) {
                     <strong>{t('channels.defaultModel')}</strong>
                     <small>{t('channels.defaultModelHint')}</small>
                   </label>
-                  <select
+                  <Select
                     id="dsh-imagegen-default-model"
                     className={css.modelChoices}
                     value={state.channels.defaultModel}
                     disabled={disabled}
-                    onChange={event => { props.channels.setDefaultModel(event.target.value) }}
+                    onChange={value => { props.channels.setDefaultModel(value) }}
                   >
                     {modelGroups.map(group => <optgroup key={group.id} label={group.name}>
                       {group.models.map(model => <option key={`${group.id}:${model}`} value={model}>{model}</option>)}
                     </optgroup>)}
-                  </select>
+                  </Select>
                 </div>
               ) : null}
               <div className={css.channelAddRow}>
@@ -1322,13 +1323,13 @@ function ChannelEditor(props: {
           </div>
           <div className={css.editorField}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-auth">{t('channels.authMode')}</label>
-            <select
+            <Select
               id="dsh-imagegen-channel-auth"
               className={css.select}
               value={channel.auth ?? 'api-key'}
               disabled={!props.writable}
-              onChange={event => {
-                if (event.target.value === 'subscription') {
+              onChange={value => {
+                if (value === 'subscription') {
                   const provider = subscription ?? 'grok-sub'
                   const model = DEFAULT_SUBSCRIPTION_MODELS[provider]
                   props.onPatch({ auth: 'subscription', subscription: provider, apiUrl: '', apiUrlFull: false, models: [{ alias: model, id: model }] })
@@ -1339,7 +1340,7 @@ function ChannelEditor(props: {
             >
               <option value="api-key">{t('channels.authModeApiKey')}</option>
               <option value="subscription">{t('channels.authModeSubscription')}</option>
-            </select>
+            </Select>
           </div>
         </div>
 
@@ -1357,18 +1358,18 @@ function ChannelEditor(props: {
             {EXPERIMENTAL_SUBSCRIPTION_PROVIDERS.has(subscription) ? <p className={css.subscriptionWarning}>{t('settings.subscriptionExperimental')}</p> : null}
             <label className={css.editorField}>
               <span className={css.label}>{t('channels.subscriptionProvider')}</span>
-              <select
+              <Select
                 className={css.select}
                 value={subscription}
                 disabled={!props.writable || props.subscriptionStatus?.state === 'logged-in'}
-                onChange={event => {
-                  const provider = event.target.value as SubscriptionProvider
+                onChange={value => {
+                  const provider = value as SubscriptionProvider
                   const model = DEFAULT_SUBSCRIPTION_MODELS[provider]
                   props.onPatch({ subscription: provider, models: [{ alias: model, id: model }] })
                 }}
               >
                 {SUBSCRIPTION_PROVIDERS.map(provider => <option key={provider} value={provider}>{SUBSCRIPTION_PROVIDER_DISPLAY_NAMES[provider]}{EXPERIMENTAL_SUBSCRIPTION_PROVIDERS.has(provider) ? ' · ' + t('settings.subscriptionExperimentalTag') : ''}</option>)}
-              </select>
+              </Select>
             </label>
             <label className={css.editorField}>
               <span className={css.label}>{t('channels.modelCatalogTitle')}</span>
@@ -1400,17 +1401,17 @@ function ChannelEditor(props: {
           </div>
           <div className={css.editorField}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-protocol">{t('channels.protocol')}</label>
-            <select
+            <Select
               id="dsh-imagegen-channel-protocol"
               className={css.input}
               value={channel.protocol ?? 'auto'}
               disabled={!props.writable}
-              onChange={event => { props.onPatch({ protocol: event.target.value as ChannelDraft['protocol'] }) }}
+              onChange={value => { props.onPatch({ protocol: value as ChannelDraft['protocol'] }) }}
             >
               <option value="auto">{t('channels.protocolAuto')}</option>
               <option value="images">{t('channels.protocolImages')}</option>
               <option value="chat-completions">{t('channels.protocolChat')}</option>
-            </select>
+            </Select>
           </div>
         </div>
         <p className={css.fieldHint}>{t('channels.protocolHint')}</p>
@@ -1542,12 +1543,12 @@ function ChannelEditor(props: {
           </div>
           {props.otherChannels.length > 0 ? (
             <div className={css.manualModelRow}>
-              <select className={css.modelChoices} value={copyFrom} disabled={!props.writable} onChange={event => { setCopyFrom(event.target.value) }} aria-label={t('channels.copyFrom')}>
+              <Select className={css.modelChoices} value={copyFrom} disabled={!props.writable} onChange={value => { setCopyFrom(value) }} aria-label={t('channels.copyFrom')}>
                 <option value="">{t('channels.copyFrom')}</option>
                 {props.otherChannels.map(other => (
                   <option key={other.id} value={other.id}>{other.name || t('channels.untitled')}</option>
                 ))}
-              </select>
+              </Select>
               <button type="button" className={css.addModel} disabled={!props.writable || copyFrom === ''} onClick={copyFromChannel}>{t('channels.copyApply')}</button>
             </div>
           ) : null}
@@ -1697,17 +1698,17 @@ function BooleanField(props: FieldProps & {
           )
           : null}
       </div>
-      <select
+      <Select
         id={props.id}
         className={css.select}
         value={props.text}
         disabled={props.disabled}
-        onChange={(event) => { props.onEdit(event.target.value) }}
+        onChange={(value) => { props.onEdit(value) }}
       >
         <option value="">{props.inheritLabel}</option>
         <option value="true">{props.onLabel}</option>
         <option value="false">{props.offLabel}</option>
-      </select>
+      </Select>
       <p className={css.hint}>{props.hint}</p>
     </div>
   )

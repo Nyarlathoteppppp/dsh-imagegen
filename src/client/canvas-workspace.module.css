@@ -923,7 +923,7 @@
   gap: 6px;
 }
 
-.composerControls select {
+.composerControls [data-dsh-select] {
   height: 28px;
   border-radius: 999px;
   border: 1px solid var(--dsw-alias-border-l1);
@@ -933,70 +933,6 @@
   padding: 0 8px;
   min-width: 0;
   max-width: 128px;
-}
-
-/* custom dropdown button + popup (styled replacement for native <select>) */
-.composerSelect {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 8px 0 11px;
-  border-radius: 999px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font-size: 11.5px;
-  min-width: 0;
-  max-width: 138px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.composerSelect:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.composerSelect[data-open] { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
-.composerSelect svg { flex: none; opacity: 0.65; }
-.composerSelect[data-open] svg { opacity: 0.9; }
-
-.composerSelectValue {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.composerSelectMenu {
-  position: fixed;
-  z-index: 95;
-  max-height: 264px;
-  overflow: auto;
-  padding: 5px;
-  border-radius: 11px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 97%, transparent);
-  box-shadow: 0 14px 38px rgb(15 23 42 / 18%);
-  backdrop-filter: blur(10px);
-}
-
-.composerSelectMenu button {
-  display: block;
-  width: 100%;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font-size: 12.5px;
-  line-height: 1.45;
-  padding: 7px 10px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.composerSelectMenu button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.composerSelectMenu button[data-selected] {
-  color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
 }
 
 .composerSend {
@@ -1155,28 +1091,6 @@
   top: auto;
   bottom: -38px;
 }
-
-/* Compact model selector inside a node's hover toolbar. */
-.toolbarSelect {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  max-width: 118px;
-  padding: 0 5px 0 8px;
-  border-radius: 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.toolbarSelect:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.toolbarSelect[data-open] { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
-.toolbarSelect svg { flex: none; opacity: 0.65; }
-.toolbarSelect .composerSelectValue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 .toolbarDivider {
   width: 1px;
@@ -1636,7 +1550,7 @@
   outline: none;
 }
 
-.generateForm select {
+.generateForm [data-dsh-select] {
   height: 30px;
   border-radius: 8px;
   border: 1px solid var(--dsw-alias-border-l1);
@@ -2095,6 +2009,7 @@
 }
 
 .skillDialogInput:focus { border-color: var(--dsw-alias-brand-primary); }
+.skillDialogInput[data-dsh-select] { min-height: 34px; resize: none; }
 
 .skillDialogActions {
   display: flex;
