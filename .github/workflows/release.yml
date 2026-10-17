@@ -42,6 +42,15 @@ jobs:
           node scripts/verify-package.mjs dist/*.tgz
           cd dist
           sha256sum *.tgz > SHA256SUMS
+      - name: Upload verified npm package
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: |
+            dist/*.tgz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,3 +65,44 @@ jobs:
           gh release create "$tag" dist/*.tgz dist/SHA256SUMS \
             --target "$GITHUB_SHA" --title "$tag" \
             --notes-file "docs/releases/${tag}.md"
+
+  publish-npm:
+    needs: release
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Install OIDC-capable npm CLI
+        run: npm install --global npm@12.2.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: dist
+      - name: Verify package checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+      - name: Publish to npm using trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          metadata="$RUNNER_TEMP/npm-version.json"
+          if npm view "$package@$version" version --json --registry=https://registry.npmjs.org > "$metadata"; then
+            echo "$package@$version is already published; leaving it unchanged."
+          else
+            # Only a confirmed missing version permits a publish. Auth, network
+            # and registry failures must stop the job rather than be ignored.
+            node -e 'const f=require("node:fs"); const r=JSON.parse(f.readFileSync(process.argv[1],"utf8")); if(r.error?.code!=="E404") process.exit(1)' "$metadata"
+            packages=(dist/*.tgz)
+            test "${#packages[@]}" -eq 1
+            npm publish "${packages[0]}" --access public --tag latest --ignore-scripts --provenance --registry=https://registry.npmjs.org
+          fi
+          npm view "$package@$version" version --registry=https://registry.npmjs.org
