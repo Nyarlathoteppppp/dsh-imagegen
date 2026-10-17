@@ -103,6 +103,6 @@ jobs:
             node -e 'const f=require("node:fs"); const r=JSON.parse(f.readFileSync(process.argv[1],"utf8")); if(r.error?.code!=="E404") process.exit(1)' "$metadata"
             packages=(dist/*.tgz)
             test "${#packages[@]}" -eq 1
-            npm publish "${packages[0]}" --access public --tag latest --ignore-scripts --provenance --registry=https://registry.npmjs.org
+            npm publish "./${packages[0]}" --access public --tag latest --ignore-scripts --provenance --registry=https://registry.npmjs.org
           fi
           npm view "$package@$version" version --registry=https://registry.npmjs.org
