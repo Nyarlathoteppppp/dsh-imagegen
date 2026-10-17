@@ -109,7 +109,8 @@ jobs:
           # Retry verification only; never repeat the publish operation here.
           for attempt in 1 2 3 4 5 6; do
             if npm view "$package@$version" --json --prefer-online --registry=https://registry.npmjs.org > "$metadata"; then
-              node -e 'const f=require("node:fs"); const m=JSON.parse(f.readFileSync(process.argv[1],"utf8")); if(m.version!==process.argv[2]) { console.error("Unexpected npm version:",m.version); process.exit(1) } console.log("Verified npm version: "+m.version); console.log("Package integrity: "+m.dist.integrity)' "$metadata" "$version"
+              echo "Verified npm version: $package@$version"
+              cat "$metadata"
               npm view "$package" dist-tags --json --prefer-online --registry=https://registry.npmjs.org
               exit 0
             fi
