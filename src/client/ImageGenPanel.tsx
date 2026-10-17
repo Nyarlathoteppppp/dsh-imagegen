@@ -19,6 +19,8 @@ import { errorMessage, tt } from './helpers.ts'
 import { renderMarkdown } from './markdown.tsx'
 import { openImageGenConfig } from './config-entry.tsx'
 import { TemplateLibrary, TemplateLibraryButton } from './TemplateLibrary.tsx'
+import { ReferenceImages } from './ReferenceImages.tsx'
+import { clipboardImageFiles, EDIT_REFERENCE_LIMIT, editReferenceLimit, useEditReferences } from './reference-images.ts'
 import { mergeTemplatePrompt } from './template-library-state.ts'
 import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
@@ -644,13 +646,13 @@ export function ImageGenPanel(props: {
   const [compareEnabled, setCompareEnabled] = useState(false)
   /** Compare selections are `${channelId}\0${model}` so duplicate aliases stay distinct. */
   const [compareModels, setCompareModels] = useState<string[]>([])
-  const [refImage, setRefImage] = useState<{ dataUrl: string; name: string } | null>(null)
   const [images, setImages] = useState<GeneratedImage[]>([])
   const [addingToConversation, setAddingToConversation] = useState<number | string | null>(null)
   const [galleryConversationAddingId, setGalleryConversationAddingId] = useState<string | null>(null)
   const [historyConversationAddingId, setHistoryConversationAddingId] = useState<string | null>(null)
   const [conversationMessage, setConversationMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const editReferences = useEditReferences(setError)
   // Submission is brief; actual generation stays visible until the host
   // queue reports that every queued/running task has finished.
   const [submitting, setSubmitting] = useState(false)
@@ -748,7 +750,6 @@ export function ImageGenPanel(props: {
         .filter(group => group.models.length > 0)
     : modelGroups
   const modeModels = [...new Set(modeGroups.flatMap(group => group.models))]
-  const fileInput = useRef<HTMLInputElement>(null)
   const previewStage = useRef<HTMLDivElement>(null)
   const activeTasks = tasks.filter(task => task.status === 'queued' || task.status === 'running')
   const activeTask = activeTasks.find(task => task.status === 'running') ?? activeTasks[0]
@@ -1110,24 +1111,10 @@ export function ImageGenPanel(props: {
     }
   }
 
-  /** Read an uploaded reference image into a data URL. */
-  const acceptFile = (file: File | undefined): void => {
-    if (file === undefined) return
-    if (!file.type.startsWith('image/')) {
-      setError(tt('edit.uploadHint'))
-      return
-    }
-    if (file.size > REF_IMAGE_MAX_BYTES) {
-      setError(tt('edit.uploadHint'))
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setRefImage({ dataUrl: reader.result, name: file.name })
-    }
-    reader.onerror = () => { setError(tt('edit.uploadHint')) }
-    reader.readAsDataURL(file)
-  }
+  const referenceLimitForChoice = (choice: ModelPickerValue): number => editReferenceLimit(choice.model,
+    config?.channels?.find(channel => channel.id === choice.channelId)
+      ?? { apiUrl: config?.apiUrl ?? '', apiUrlFull: false, models: [] },
+  )
 
   /** Read uploaded product assets into session-only data-URL chips. Product
    *  refs cap at MAX_ECOMMERCE_ASSETS; the style group holds a single image
@@ -1163,7 +1150,7 @@ export function ImageGenPanel(props: {
 
   /** Run one generation. */
   const handleGenerate = async (): Promise<void> => {
-    if (submitting) return
+    if (submitting || (tab === 'edit' && editReferences.reading)) return
     if (!enabled) {
       openSettingsGuide('disabled')
       return
@@ -1178,7 +1165,7 @@ export function ImageGenPanel(props: {
       setError(tt('prompt.required'))
       return
     }
-    if (tab === 'edit' && refImage === null) {
+    if (tab === 'edit' && editReferences.images.length === 0) {
       setError(tt('edit.required'))
       return
     }
@@ -1189,8 +1176,11 @@ export function ImageGenPanel(props: {
       quality,
       n: count,
       detail,
-      ...tab === 'edit' && refImage !== null ? { image: refImage.dataUrl } : {},
-      ...tab === 'edit' && refImage !== null ? { refName: refImage.name } : {},
+      ...(tab === 'edit' && editReferences.images.length > 0 ? {
+        image: editReferences.images[0]!.dataUrl,
+        ...(editReferences.images.length > 1 ? { images: editReferences.images.slice(1).map(image => image.dataUrl) } : {}),
+        refName: editReferences.images.map(image => image.name).join('、'),
+      } : {}),
     }
     setError(null)
     setSubmitting(true)
@@ -1203,6 +1193,11 @@ export function ImageGenPanel(props: {
       }
       if (!targetChoices.every(choice => channelReady(choice.channelId))) {
         openSettingsGuide('generation')
+        return
+      }
+      const referenceLimit = Math.min(...targetChoices.map(referenceLimitForChoice))
+      if (tab === 'edit' && editReferences.images.length > referenceLimit) {
+        setError(tt('edit.modelLimit', { count: referenceLimit }))
         return
       }
       const comparisonId = targetChoices.length > 1 ? newComparisonId() : undefined
@@ -1283,7 +1278,7 @@ export function ImageGenPanel(props: {
     setEcommerceRestored(null)
     setEcommerceAnchor(null)
     setEcommerceAssets([])
-    setRefImage(null)
+    editReferences.clear()
     setError(null)
   }
 
@@ -1486,7 +1481,7 @@ export function ImageGenPanel(props: {
   const startNewCreation = (): void => {
     openTab('text')
     setPrompt('')
-    setRefImage(null)
+    editReferences.clear()
     setImages([])
     setPreview(null)
     setPreviewScale(1)
@@ -1528,7 +1523,7 @@ export function ImageGenPanel(props: {
       size,
       quality,
       detail,
-      ...refImage !== null ? { refName: refImage.name } : {},
+      ...editReferences.images.length > 0 ? { refName: editReferences.images.map(image => image.name).join('、') } : {},
     }
     setGalleryAdding(true)
     try {
@@ -1794,7 +1789,11 @@ export function ImageGenPanel(props: {
   const promptLimit = promptCharLimit(activeModel)
   const promptOverLimit = promptLimit !== null && prompt.trim().length >= promptLimit
 
-  const generateDisabled = submitting || modeModels.length === 0 || promptOverLimit
+  const editTargetChoices = (compareEnabled ? compareModels.map(modelChoiceFromKey).filter((choice): choice is ModelPickerValue => choice !== undefined) : [resolveModelChoice(modeGroups, { channelId: modelChannelId, model }, defaultChannelId)])
+    .filter(choice => modeGroups.some(group => group.id === choice.channelId && group.models.includes(choice.model)))
+  const editLimit = editTargetChoices.length > 0 ? Math.min(...editTargetChoices.map(referenceLimitForChoice)) : EDIT_REFERENCE_LIMIT
+  const referencePolicyWarning = tab === 'edit' && editReferences.images.length > editLimit ? tt('edit.modelLimit', { count: editLimit }) : null
+  const generateDisabled = submitting || modeModels.length === 0 || promptOverLimit || (tab === 'edit' && (editReferences.reading || referencePolicyWarning !== null))
   const ecommerceSlots = ecommerce.slots.filter(slot => slot.enabled && slot.count > 0)
   const ecommerceTotal = ecommerceSlots.reduce((total, slot) => total + slot.count, 0)
   const ecommerceGenerateDisabled = submitting || ecommerceGenerating || ecommerceSlots.length === 0 || ecommerce.productName.trim() === '' || (ecommerce.language === 'custom' && effectiveEcommerceLanguage(ecommerce) === '')
@@ -1930,12 +1929,13 @@ export function ImageGenPanel(props: {
   const addPreviewToEdit = (): void => {
     if (previewImage === null || preview === null) return
     openTab('edit')
-    setRefImage({
+    setError(null)
+    editReferences.replace({
       dataUrl: srcOf(previewImage),
+      bytes: Math.floor(previewImage.b64.length * 3 / 4) - (previewImage.b64.endsWith('==') ? 2 : previewImage.b64.endsWith('=') ? 1 : 0),
       name: `dsh-image-${preview.index + 1}.${extensionOf(previewImage.mime)}`,
     })
     if (prompt.trim() === '' && previewImage.revisedPrompt !== undefined) setPrompt(previewImage.revisedPrompt)
-    setError(null)
     closePreview()
   }
 
@@ -2182,7 +2182,11 @@ export function ImageGenPanel(props: {
 
       <div className={css.studio}>
         {/* ------------------------------- left history + generation workspace */}
-        <div ref={generationRef} className={css.generation} data-workspace={workspace}>
+        <div ref={generationRef} className={css.generation} data-workspace={workspace} onPaste={event => {
+          if (workspace !== 'normal' || tab !== 'edit') return
+          const files = clipboardImageFiles(event.clipboardData)
+          if (files.length > 0) { event.preventDefault(); event.stopPropagation(); editReferences.add(files) }
+        }}>
           {workspace !== 'canvas' ? <TemplateLibraryButton expanded={libraryOpen} onClick={() => setLibraryOpen(true)} /> : null}
           {/* ------------------------------------------------ config sidebar */}
           <aside
@@ -2493,48 +2497,9 @@ export function ImageGenPanel(props: {
 
             {isGeneration && tab === 'edit' ? (
               <section className={css.card}>
-                {refImage === null
-                  ? (
-                    <button
-                      type="button"
-                      className={css.uploadBox}
-                      onClick={() => { fileInput.current?.click() }}
-                      onDragOver={(event) => { event.preventDefault() }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        acceptFile(event.dataTransfer.files?.[0])
-                      }}
-                    >
-                      <span className={css.uploadIcon}>
-                        <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 10.5V3"/><path d="M5 5.5l3-3 3 3"/><path d="M2.5 9v3.5h11V9"/></svg>
-                      </span>
-                      <span>{tt('edit.upload')}</span>
-                      <span className={css.uploadHint}>{tt('edit.uploadHint')}</span>
-                    </button>
-                  )
-                  : (
-                    <div className={css.reference}>
-                      <img className={css.referenceImage} src={refImage.dataUrl} alt={refImage.name} />
-                      <div className={css.referenceActions}>
-                        <Button variant="outline" size="sm" onClick={() => { fileInput.current?.click() }}>
-                          {tt('edit.change')}
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => { setRefImage(null) }}>
-                          {tt('edit.remove')}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  className={css.hiddenFile}
-                  onChange={(event) => {
-                    acceptFile(event.target.files?.[0])
-                    event.target.value = ''
-                  }}
-                />
+                <ReferenceImages images={editReferences.images} reading={editReferences.reading}
+                  onAdd={editReferences.add} onRemove={editReferences.remove} onClear={editReferences.clear}
+                  notice={referencePolicyWarning} />
               </section>
             ) : null}
 

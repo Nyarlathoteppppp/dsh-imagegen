@@ -2,6 +2,8 @@
 
 状态：开发分支 `feat/template-drawer`，待审核。未合并 main，未发布 GitHub Release 或 npm，package.json 保持 1.7.0。
 
+本分支后续已加入[图生图多图上传](multi-reference-review.md)，审核包包含两项更新。
+
 ## 本次更新
 
 - 普通生图、图生图、电商和画布增加统一的悬浮「模板」入口；画布原工具栏入口继续可用。

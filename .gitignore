@@ -24,3 +24,6 @@ Thumbs.db
 
 # Local template browser fixture output
 .template-preview/
+
+# Local multi-reference browser fixture output
+.references-preview/
