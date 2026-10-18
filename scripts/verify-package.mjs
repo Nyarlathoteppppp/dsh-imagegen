@@ -11,6 +11,7 @@ const manifest = JSON.parse(execFileSync('tar', ['-xOzf', file, 'package/package
 assert.equal(manifest.version, JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).version)
 assert.ok(entries.includes(`package/docs/releases/v${manifest.version}.md`), 'package includes current release notes')
 const client = execFileSync('tar', ['-xOzf', file, 'package/lib/client.js'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+assert.ok(client.includes('data-comparison-task'), 'packaged client includes per-model comparison slots')
 assert.ok(client.includes('data-result-preview-grid'), 'packaged client includes the fitted result preview')
 assert.ok(client.includes('update.hostManagedHint'), 'packaged client includes desktop update guidance')
 assert.ok(client.includes('data-edit-references'), 'packaged client includes multi-reference upload')
