@@ -567,6 +567,10 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .updateStatus {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow-y: auto;
   margin: 10px 14px 0;
   padding: 8px 10px;
   border-radius: 8px;
@@ -575,6 +579,8 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   font-size: 12px;
   line-height: 1.5;
 }
+
+.updateManaged { margin: 10px 14px 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.6; }
 
 .updateStatus[data-kind='failed'] {
   background: color-mix(in srgb, var(--dsw-alias-label-error) 9%, transparent);
@@ -655,6 +661,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 }
 
 .generation {
+  position: relative;
   display: flex;
   width: 100%;
   gap: 14px;
@@ -2537,14 +2544,17 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
 
 .image {
   display: block;
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   width: 100%;
-  object-fit: cover;
+  height: 100%;
+  object-fit: contain;
   background: var(--dsw-alias-bg-base);
 }
 
 .imageCaption {
+  flex: none;
   padding: 7px 10px;
   font-size: 11px;
   line-height: 1.5;

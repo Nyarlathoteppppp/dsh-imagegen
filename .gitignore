@@ -21,3 +21,12 @@ Thumbs.db
 
 # Local poster browser fixture output
 .poster-preview/
+
+# Local template browser fixture output
+.template-preview/
+
+# Local multi-reference browser fixture output
+.references-preview/
+
+# Local result sizing fixture output
+.result-preview/

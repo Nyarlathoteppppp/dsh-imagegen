@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.7.0'
+export const PLUGIN_VERSION = '1.8.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -1130,6 +1130,9 @@ export interface UpdateInfo {
   publishedAt?: string
   /** Markdown release body shown in the update popover. */
   releaseNotes?: string
+  /** How the current launcher allows this plugin to be updated. */
+  installMode?: 'cli' | 'host-managed'
+  profile?: string
 }
 
 /** One history image reference as the browser consumes it (a served URL). */

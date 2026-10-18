@@ -13,6 +13,7 @@
 import { createServer, request as httpRequest } from 'node:http'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -192,6 +193,69 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
   assert.equal(second, first)
   assert.equal(calls, 1)
   host.clearUpdateCache()
+})
+
+await check('A3b updater recognizes desktop profiles and refuses CLI writes (#41)', async () => {
+  const desktopArgv = ['/Applications/DSH.app/Contents/MacOS/DSH', '--expose-internals', '/Applications/DSH.app/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js', '/Applications/DSH.app/app.asar/dsh', '/Users/test/.dsh/profiles/desktop', '/runtime/pnpm/bin/pnpm.mjs']
+  assert.equal(host.profileFromProcess(desktopArgv, {}), 'desktop')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile=custom_web'], {}), 'custom_web')
+  assert.equal(host.profileFromProcess(['node', 'dsh', 'C:\\Users\\test\\.dsh\\profiles\\desktop\\'], {}), 'desktop')
+  assert.equal(host.profileFromProcess(desktopArgv, { DSH_PROFILE: 'custom' }), 'custom')
+  assert.equal(host.profileFromProcess(desktopArgv, { DSH_PROFILE: 'ignored' }, { profile: 'host-profile' }), 'host-profile')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', '../bad'], {}), 'web')
+  assert.equal(host.updateInstallTarget(desktopArgv, {}).installMode, 'host-managed')
+  assert.equal(host.updateInstallTarget(['node', 'dsh', 'web'], { DSH_DESKTOP: '1' }).installMode, 'host-managed')
+  let spawned = false
+  const rejectSpawn = () => { spawned = true; throw new Error('must not spawn') }
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, desktopArgv, {}), /桌面端.*应用管理/)
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, ['node','dsh','web'], {}, { profile: 'desktop' }), /桌面端/)
+  await assert.rejects(host.installUpdate('9.9.9; touch nope', rejectSpawn, ['node','dsh','web'], {}), /invalid update version/)
+  assert.equal(spawned, false, 'desktop and invalid versions cannot start a package operation')
+})
+await check('A3c updater preserves stderr, pnpm store guidance and diagnostics (#41)', async () => {
+  const calls=[]
+  const fakeSpawn = (code, stderr='', error) => (command,args,options) => {
+    calls.push({command,args,options})
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => true
+    queueMicrotask(() => {
+      if (error) { child.emit('error', error); return }
+      // stderr can arrive after exit; the updater must await close.
+      child.emit('exit',code,null)
+      child.stderr.emit('data', Buffer.from(stderr))
+      child.emit('close',code,null)
+    })
+    return child
+  }
+  await host.installUpdate('9.9.9',fakeSpawn(0),['node','dsh','web','--profile','team-web'],{})
+  assert.deepEqual(calls.at(-1).args, ['plugin','--profile','team-web','add','@dickpy/dsh-imagegen@9.9.9'])
+  assert.deepEqual(calls.at(-1).options.stdio,['ignore','pipe','pipe'])
+  await assert.rejects(host.installUpdate('9.9.9',fakeSpawn(1,'ERR_PNPM_UNEXPECTED_STORE\nstore/v10 vs store/v11\n_authToken=npm-secret-value\nhttps://test:secret@registry.example/'),['node','dsh','web'],{}), error => {
+    assert.match(error.message,/profile: web/)
+    assert.match(error.message,/exited with code 1/)
+    assert.match(error.message,/ERR_PNPM_UNEXPECTED_STORE/)
+    assert.match(error.message,/same pnpm version/)
+    assert.doesNotMatch(error.message,/npm-secret-value|test:secret/)
+    return true
+  })
+  assert.ok(host.listDiagnostics().some(entry => entry.mode === 'update' && entry.message.includes('ERR_PNPM_UNEXPECTED_STORE')))
+  await assert.rejects(host.installUpdate('9.9.9',fakeSpawn(null,'',new Error('spawn dsh ENOENT')),['node','dsh','web'],{}),/ENOENT/)
+  await assert.rejects(host.installUpdate('9.9.9',()=>{throw new Error('spawn refused')},['node','dsh','web'],{}),/spawn refused/)
+})
+
+await check('A3d update discovery exposes launcher-owned desktop status (#41)', async () => {
+  const savedFetch=globalThis.fetch
+  host.clearUpdateCache()
+  globalThis.fetch=async()=>new Response(JSON.stringify({tag_name:'v9.9.9',draft:false,prerelease:false}),{status:200,headers:{'content-type':'application/json'}})
+  try {
+    const routes=host.makeRoutes({settings:{describe:()=>[],mutate:async()=>{}},resolve:()=>({apiUrl:'',apiKey:''}),resolveUpdateContext:()=>({profile:'desktop',profileDir:'/Users/test/.dsh/profiles/desktop'})})
+    const route=routes.find(route=>route.path==='/api/dsh-imagegen/update/check')
+    let result
+    await route.handler({method:'POST',socket:{remoteAddress:'127.0.0.1'},headers:{host:'127.0.0.1'}},{writeHead(){},end(payload){result=JSON.parse(payload)}})
+    assert.equal(result.ok,true)
+    assert.equal(result.update.profile,'desktop')
+    assert.equal(result.update.installMode,'host-managed')
+  } finally {globalThis.fetch=savedFetch;host.clearUpdateCache()}
 })
 
 // ---------------------------------------------- B. engine vs mock upstream
@@ -3689,7 +3753,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     + '<div data-other-plugin-entry></div>'
     + '</div>'
     + '</body></html>',
-    { pretendToBeVisual: true },
+    { pretendToBeVisual: true, url: 'http://localhost/' },
   )
   const jsdomWindow = dom.window
   const jsdomDocument = jsdomWindow.document
@@ -3873,6 +3937,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const previewRequests = []
   /** Every fetch path the client issued (debug aid for the canvas tools). */
   const requestPaths = []
+  let updateInstallMode = 'cli'
+  let updateApplyCalls = 0
   const canvasDocument = {
     version: 2,
     id: 'canvas-smoke',
@@ -3888,6 +3954,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
+    if (path.endsWith('/update/check')) return { ok: true, json: async () => ({ ok: true, update: { currentVersion: '1.7.0', latestVersion: '9.9.9', updateAvailable: true, releaseUrl: 'https://github.com/dickpy/dsh-imagegen/releases', releaseNotes: 'Fixture notes', profile: updateInstallMode === 'cli' ? 'web' : 'desktop', installMode: updateInstallMode } }) }
+    if (path.endsWith('/update/apply')) { updateApplyCalls += 1; return { ok: true, json: async () => ({ ok: false, code: 'update-failed', message: 'profile: web\nERR_PNPM_UNEXPECTED_STORE: test store mismatch' }) } }
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
@@ -4416,6 +4484,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), true, 'the switcher follows the native action')
     nativeNewSession.className = 'newSession'
 
+    const updateTrigger = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('更新 v9.9.9'))
+    assert.ok(updateTrigger, 'new release opens the update popover')
+    updateTrigger.click()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    ;[...view.querySelectorAll('button')].find(button => button.textContent === '在线更新').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(view.textContent.includes('ERR_PNPM_UNEXPECTED_STORE'), 'update UI preserves the actual failure reason')
+    assert.equal(updateApplyCalls, 1)
+    updateInstallMode = 'host-managed'
+    jsdomDocument.dispatchEvent(new dom.window.Event('visibilitychange'))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const managedUpdate = [...view.querySelectorAll('button')].find(button => button.textContent === '由桌面端管理')
+    assert.ok(managedUpdate?.disabled, 'desktop does not offer the impossible CLI install')
+    assert.ok(view.textContent.includes('桌面端插件由 DSH 应用管理'), 'desktop explains the update procedure')
+    managedUpdate.click()
+    assert.equal(updateApplyCalls, 1, 'managed mode never sends an apply request')
+    view.querySelector('[aria-label="关闭"][title="关闭"]')?.click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(view.querySelector('[role="dialog"][aria-label="发现新版本"]'), null, 'update popover closes before other dialog regressions')
+
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
@@ -4478,6 +4566,23 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(noReferenceOption !== undefined, 'the rounded reference menu offers reference-free generation')
     noReferenceOption.click()
     await new Promise(resolve => setTimeout(resolve, 20))
+    const productInfo = view.querySelector('[data-ecommerce-workspace] textarea')
+    nativeTextAreaSetter.call(productInfo, '保留商品瓶身和品牌标识')
+    productInfo.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    view.querySelector('[data-template-library-trigger]').click()
+    await waitForSelector(jsdomDocument, '[data-template-drawer]')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const productDrawer = jsdomDocument.querySelector('[data-template-drawer]')
+    ;[...productDrawer.querySelectorAll('button')].find(button => button.textContent?.includes('Template poster')).click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal([...productDrawer.querySelectorAll('button')].some(button => button.textContent?.includes('替换当前提示词')), false, 'ecommerce never replaces product requirements')
+    ;[...productDrawer.querySelectorAll('button')].find(button => button.textContent?.includes('添加到风格要求')).click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(view.querySelector('input[placeholder="商品名称（必填）"]').value, '测试保温杯', 'template retains product name')
+    assert.equal(view.querySelector('[data-ecommerce-workspace] textarea').value, '保留商品瓶身和品牌标识\n\nA reusable template prompt', 'ecommerce template appends to product information')
+    assert.ok(view.querySelector('[data-ecommerce-asset]'), 'template retains uploaded product reference')
+    assert.equal(view.querySelectorAll('button[data-ecommerce-ref-select]').length, 4, 'template retains slot reference settings')
     const previewSet = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('生成套图预览'))
     assert.ok(previewSet !== undefined, 'ecommerce preview action is rendered')
     previewSet.click()
@@ -4557,7 +4662,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Template-library regression: choose a card, use its prompt, and verify
     // the text editor receives it while the modal closes.
     const templateTrigger = [...jsdomDocument.querySelectorAll('button')]
-      .find(button => button.textContent?.includes('模板库'))
+      .find(button => button.hasAttribute('data-template-library-trigger'))
     assert.ok(templateTrigger !== undefined, 'template library trigger rendered')
     templateTrigger.click()
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -4569,12 +4674,82 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     templateCard.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     const useTemplate = [...libraryModal.querySelectorAll('button')]
-      .find(button => button.textContent?.includes('使用此提示词'))
+      .find(button => button.textContent?.includes('替换当前提示词'))
     assert.ok(useTemplate !== undefined, 'use-template action rendered')
     useTemplate.click()
     await new Promise(resolve => setTimeout(resolve, 50))
     assert.equal(jsdomDocument.querySelector('textarea')?.value, 'A reusable template prompt')
     assert.equal(jsdomDocument.querySelector('[role="dialog"][aria-label="提示词模板库"]'), null, 'template modal closed after use')
+
+    // The drawer remembers use, searches every source and appends without loss.
+    templateTrigger.click()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    const drawer = jsdomDocument.querySelector('[data-template-drawer]')
+    assert.equal(drawer.querySelector('section').style.width, '75%', 'wide drawer defaults to 75%')
+    const drawerButton = label => [...drawer.querySelectorAll('button')].find(button => button.textContent?.includes(label))
+    drawerButton('最近使用').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.ok(drawerButton('Template poster'), 'applied template appears in recents')
+    drawerButton('全部模板').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    const scope = drawer.querySelector('select[aria-label="搜索范围"]')
+    scope.value = 'all'
+    scope.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 80))
+    assert.equal(drawer.querySelectorAll('[role="tablist"]')[0].children.length, 5, 'all five template libraries retained')
+    assert.equal(drawer.querySelectorAll('[role="tablist"]')[0].querySelector('[aria-selected="true"]'), null, 'cross-library scope does not mislabel active source')
+    const fullscreen = drawer.querySelector('[aria-label="铺满工作区"]')
+    fullscreen.click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(drawer.querySelector('section').style.width, '100%', 'fullscreen fills the workspace')
+    drawer.querySelector('[aria-label="恢复宽度"]').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    drawerButton('Template poster').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    drawerButton('追加到提示词').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(jsdomDocument.querySelector('textarea')?.value, 'A reusable template prompt\n\nA reusable template prompt', 'append preserves existing prompt')
+    templateTrigger.click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    jsdomWindow.dispatchEvent(new jsdomWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(jsdomDocument.querySelector('[data-template-drawer]'), null, 'Escape closes drawer')
+
+
+    const editMode = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '图生图')
+    editMode.click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const editUpload = view.querySelector('[data-edit-references] input[type="file"]')
+    Object.defineProperty(editUpload, 'files', { value: { 0: new dom.window.File(['ref'], 'retained-reference.png', { type: 'image/png' }), length: 1 }, configurable: true })
+    editUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.ok(view.querySelector('img[alt="retained-reference.png"]'), 'edit reference loaded')
+    view.querySelector('[data-template-library-trigger]').click()
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const editDrawer = jsdomDocument.querySelector('[data-template-drawer]')
+    ;[...editDrawer.querySelectorAll('button')].find(button => button.textContent?.includes('Template poster')).click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    ;[...editDrawer.querySelectorAll('button')].find(button => button.textContent?.includes('替换当前提示词')).click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(view.querySelector('img[alt="retained-reference.png"]'), 'template retains edit mode and reference image')
+    assert.equal(view.querySelector('textarea').value, 'A reusable template prompt', 'edit prompt receives template')
+    assert.equal(editUpload.multiple, true, 'edit picker supports multiple files')
+    const extraRefs = [new dom.window.File(['second'], 'second.png', { type: 'image/png' }), new dom.window.File(['third'], 'third.png', { type: 'image/png' })]
+    Object.defineProperty(editUpload, 'files', { value: extraRefs, configurable: true })
+    editUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    assert.deepEqual([...view.querySelectorAll('[data-edit-reference] img')].map(image => image.alt), ['retained-reference.png', 'second.png', 'third.png'], 'multiple selections append in input order')
+    view.querySelector('[data-edit-reference] button').click()
+    await waitForSelector(jsdomDocument, '[data-edit-reference-preview]')
+    dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(jsdomDocument.querySelector('[data-edit-reference-preview]'), null, 'reference preview closes with Escape')
+    view.querySelector('[aria-label="删除图2：second.png"]').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.deepEqual([...view.querySelectorAll('[data-edit-reference] img')].map(image => image.alt), ['retained-reference.png', 'third.png'], 'deleting one reference retains the others')
+
+    normalSwitch.click()
+    await new Promise(resolve => setTimeout(resolve, 25))
 
     // --- save-flow regression: a secret field's save must report success ---
     // The redacted wire view never returns the key, so the form judges the
@@ -4704,6 +4879,24 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
       return predicate()
     }
+
+    // Drawer keyboard events cannot reach canvas delete/undo shortcuts.
+    view.querySelector('[data-node-id="node-image"]').dispatchEvent(new dom.window.MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    dom.window.dispatchEvent(new dom.window.MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.ok(view.querySelector('[data-node-id="node-image"]').className.includes('nodeSelected'), 'canvas node is selected before drawer keyboard regression')
+    view.querySelector('[data-canvas-workspace] [data-template-library-trigger]').click()
+    await waitForSelector(jsdomDocument, '[data-template-drawer]')
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const canvasDrawer = jsdomDocument.querySelector('[data-template-drawer]')
+    const beforeDrawerNodes = view.querySelectorAll('[data-node-id]').length
+    canvasDrawer.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }))
+    canvasDrawer.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(view.querySelectorAll('[data-node-id]').length, beforeDrawerNodes, 'drawer cannot delete or undo canvas nodes')
+    canvasDrawer.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(jsdomDocument.querySelector('[data-template-drawer]'), null, 'canvas drawer closes independently')
 
     // Editable poster end-to-end: the source stays untouched, local overlays
     // survive the real save payload, and reopening edits the original recipe.
@@ -5087,7 +5280,52 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(view.querySelector('[role="dialog"]').textContent.includes('paper.pdf'), 'the reader names the PDF')
     view.querySelector('[role="dialog"] [title="关闭预览"]').dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
     assert.ok(await waitUntil(() => view.querySelector('[role="dialog"]') === null), 'the close button dismisses the reader')
+
+    // The actual normal-generation form forwards primary + extras, then keeps
+    // the legacy single-image request shape when only one reference remains.
+    face.channels.setChannelKey('default', 'sk-multi-reference')
+    await face.channels.commit()
+    normalSwitch.click()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    ;[...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '图生图').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    const finalUpload = view.querySelector('[data-edit-references] input[type="file"]')
+    const clearReferences = [...view.querySelectorAll('[data-edit-references] button')].find(button => button.textContent === '清空')
+    clearReferences.click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    const finalRefs = [new dom.window.File(['one'], 'one.png', { type: 'image/png' }), new dom.window.File(['two'], 'two.png', { type: 'image/png' }), new dom.window.File(['three'], 'three.png', { type: 'image/png' })]
+    Object.defineProperty(finalUpload, 'files', { value: finalRefs, configurable: true })
+    finalUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 60))
+    const finalPrompt = view.querySelector('textarea')
+    nativeTextAreaSetter.call(finalPrompt, 'Combine the three references in order')
+    finalPrompt.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 25))
+    const beforeMultiSubmit = ecommerceSubmissions.length
+    view.querySelector('button[class*="generateButton"]').click()
+    assert.ok(await waitUntil(() => ecommerceSubmissions.length === beforeMultiSubmit + 1), 'multi-reference form submits a task')
+    const multiRequest = ecommerceSubmissions.at(-1)
+    assert.equal(multiRequest.image, 'data:image/png;base64,b25l')
+    assert.deepEqual(multiRequest.images, ['data:image/png;base64,dHdv', 'data:image/png;base64,dGhyZWU='])
+    assert.equal(multiRequest.refName, 'one.png、two.png、three.png')
+    await new Promise(resolve => setTimeout(resolve, 40))
+    view.querySelector('[aria-label="删除图3：three.png"]').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    view.querySelector('[aria-label="删除图2：two.png"]').click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    view.querySelector('button[class*="generateButton"]').click()
+    assert.ok(await waitUntil(() => ecommerceSubmissions.length === beforeMultiSubmit + 2), 'single-reference form still submits')
+    assert.equal(ecommerceSubmissions.at(-1).images, undefined, 'single reference retains legacy wire format')
+    assert.equal(ecommerceSubmissions.at(-1).image, 'data:image/png;base64,b25l')
+    jsdomDocument.querySelector('[data-history-new]').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(view.querySelectorAll('[data-edit-reference]').length, 0, 'new creation clears all edit references')
+
+  } catch (error) {
+    console.error('Client regression:', error)
+    throw error
   } finally {
+    await new Promise(resolve => setTimeout(resolve, 100))
     if (previousWindow === undefined) delete globalThis.window
     else globalThis.window = previousWindow
     if (previousDocument === undefined) delete globalThis.document
