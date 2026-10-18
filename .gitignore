@@ -27,3 +27,6 @@ Thumbs.db
 
 # Local multi-reference browser fixture output
 .references-preview/
+
+# Local result sizing fixture output
+.result-preview/

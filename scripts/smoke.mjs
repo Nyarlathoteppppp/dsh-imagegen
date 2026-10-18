@@ -13,6 +13,7 @@
 import { createServer, request as httpRequest } from 'node:http'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -192,6 +193,69 @@ await check('A3 updater parses stable Releases and caches checks', async () => {
   assert.equal(second, first)
   assert.equal(calls, 1)
   host.clearUpdateCache()
+})
+
+await check('A3b updater recognizes desktop profiles and refuses CLI writes (#41)', async () => {
+  const desktopArgv = ['/Applications/DSH.app/Contents/MacOS/DSH', '--expose-internals', '/Applications/DSH.app/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js', '/Applications/DSH.app/app.asar/dsh', '/Users/test/.dsh/profiles/desktop', '/runtime/pnpm/bin/pnpm.mjs']
+  assert.equal(host.profileFromProcess(desktopArgv, {}), 'desktop')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile=custom_web'], {}), 'custom_web')
+  assert.equal(host.profileFromProcess(['node', 'dsh', 'C:\\Users\\test\\.dsh\\profiles\\desktop\\'], {}), 'desktop')
+  assert.equal(host.profileFromProcess(desktopArgv, { DSH_PROFILE: 'custom' }), 'custom')
+  assert.equal(host.profileFromProcess(desktopArgv, { DSH_PROFILE: 'ignored' }, { profile: 'host-profile' }), 'host-profile')
+  assert.equal(host.profileFromProcess(['node', 'dsh', '--profile', '../bad'], {}), 'web')
+  assert.equal(host.updateInstallTarget(desktopArgv, {}).installMode, 'host-managed')
+  assert.equal(host.updateInstallTarget(['node', 'dsh', 'web'], { DSH_DESKTOP: '1' }).installMode, 'host-managed')
+  let spawned = false
+  const rejectSpawn = () => { spawned = true; throw new Error('must not spawn') }
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, desktopArgv, {}), /桌面端.*应用管理/)
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, ['node','dsh','web'], {}, { profile: 'desktop' }), /桌面端/)
+  await assert.rejects(host.installUpdate('9.9.9; touch nope', rejectSpawn, ['node','dsh','web'], {}), /invalid update version/)
+  assert.equal(spawned, false, 'desktop and invalid versions cannot start a package operation')
+})
+await check('A3c updater preserves stderr, pnpm store guidance and diagnostics (#41)', async () => {
+  const calls=[]
+  const fakeSpawn = (code, stderr='', error) => (command,args,options) => {
+    calls.push({command,args,options})
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => true
+    queueMicrotask(() => {
+      if (error) { child.emit('error', error); return }
+      // stderr can arrive after exit; the updater must await close.
+      child.emit('exit',code,null)
+      child.stderr.emit('data', Buffer.from(stderr))
+      child.emit('close',code,null)
+    })
+    return child
+  }
+  await host.installUpdate('9.9.9',fakeSpawn(0),['node','dsh','web','--profile','team-web'],{})
+  assert.deepEqual(calls.at(-1).args, ['plugin','--profile','team-web','add','@dickpy/dsh-imagegen@9.9.9'])
+  assert.deepEqual(calls.at(-1).options.stdio,['ignore','pipe','pipe'])
+  await assert.rejects(host.installUpdate('9.9.9',fakeSpawn(1,'ERR_PNPM_UNEXPECTED_STORE\nstore/v10 vs store/v11\n_authToken=npm-secret-value\nhttps://test:secret@registry.example/'),['node','dsh','web'],{}), error => {
+    assert.match(error.message,/profile: web/)
+    assert.match(error.message,/exited with code 1/)
+    assert.match(error.message,/ERR_PNPM_UNEXPECTED_STORE/)
+    assert.match(error.message,/same pnpm version/)
+    assert.doesNotMatch(error.message,/npm-secret-value|test:secret/)
+    return true
+  })
+  assert.ok(host.listDiagnostics().some(entry => entry.mode === 'update' && entry.message.includes('ERR_PNPM_UNEXPECTED_STORE')))
+  await assert.rejects(host.installUpdate('9.9.9',fakeSpawn(null,'',new Error('spawn dsh ENOENT')),['node','dsh','web'],{}),/ENOENT/)
+  await assert.rejects(host.installUpdate('9.9.9',()=>{throw new Error('spawn refused')},['node','dsh','web'],{}),/spawn refused/)
+})
+
+await check('A3d update discovery exposes launcher-owned desktop status (#41)', async () => {
+  const savedFetch=globalThis.fetch
+  host.clearUpdateCache()
+  globalThis.fetch=async()=>new Response(JSON.stringify({tag_name:'v9.9.9',draft:false,prerelease:false}),{status:200,headers:{'content-type':'application/json'}})
+  try {
+    const routes=host.makeRoutes({settings:{describe:()=>[],mutate:async()=>{}},resolve:()=>({apiUrl:'',apiKey:''}),resolveUpdateContext:()=>({profile:'desktop',profileDir:'/Users/test/.dsh/profiles/desktop'})})
+    const route=routes.find(route=>route.path==='/api/dsh-imagegen/update/check')
+    let result
+    await route.handler({method:'POST',socket:{remoteAddress:'127.0.0.1'},headers:{host:'127.0.0.1'}},{writeHead(){},end(payload){result=JSON.parse(payload)}})
+    assert.equal(result.ok,true)
+    assert.equal(result.update.profile,'desktop')
+    assert.equal(result.update.installMode,'host-managed')
+  } finally {globalThis.fetch=savedFetch;host.clearUpdateCache()}
 })
 
 // ---------------------------------------------- B. engine vs mock upstream
@@ -3873,6 +3937,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const previewRequests = []
   /** Every fetch path the client issued (debug aid for the canvas tools). */
   const requestPaths = []
+  let updateInstallMode = 'cli'
+  let updateApplyCalls = 0
   const canvasDocument = {
     version: 2,
     id: 'canvas-smoke',
@@ -3888,6 +3954,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
+    if (path.endsWith('/update/check')) return { ok: true, json: async () => ({ ok: true, update: { currentVersion: '1.7.0', latestVersion: '9.9.9', updateAvailable: true, releaseUrl: 'https://github.com/dickpy/dsh-imagegen/releases', releaseNotes: 'Fixture notes', profile: updateInstallMode === 'cli' ? 'web' : 'desktop', installMode: updateInstallMode } }) }
+    if (path.endsWith('/update/apply')) { updateApplyCalls += 1; return { ok: true, json: async () => ({ ok: false, code: 'update-failed', message: 'profile: web\nERR_PNPM_UNEXPECTED_STORE: test store mismatch' }) } }
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
@@ -4415,6 +4483,26 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(jsdomDocument.documentElement.hasAttribute('data-dsh-imagegen-active'), false, 'the native action returns from the studio to the conversation')
     assert.equal(jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]').hasAttribute('data-active'), true, 'the switcher follows the native action')
     nativeNewSession.className = 'newSession'
+
+    const updateTrigger = [...view.querySelectorAll('button')].find(button => button.textContent?.includes('更新 v9.9.9'))
+    assert.ok(updateTrigger, 'new release opens the update popover')
+    updateTrigger.click()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    ;[...view.querySelectorAll('button')].find(button => button.textContent === '在线更新').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.ok(view.textContent.includes('ERR_PNPM_UNEXPECTED_STORE'), 'update UI preserves the actual failure reason')
+    assert.equal(updateApplyCalls, 1)
+    updateInstallMode = 'host-managed'
+    jsdomDocument.dispatchEvent(new dom.window.Event('visibilitychange'))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const managedUpdate = [...view.querySelectorAll('button')].find(button => button.textContent === '由桌面端管理')
+    assert.ok(managedUpdate?.disabled, 'desktop does not offer the impossible CLI install')
+    assert.ok(view.textContent.includes('桌面端插件由 DSH 应用管理'), 'desktop explains the update procedure')
+    managedUpdate.click()
+    assert.equal(updateApplyCalls, 1, 'managed mode never sends an apply request')
+    view.querySelector('[aria-label="关闭"][title="关闭"]')?.click()
+    await new Promise(resolve => setTimeout(resolve, 25))
+    assert.equal(view.querySelector('[role="dialog"][aria-label="发现新版本"]'), null, 'update popover closes before other dialog regressions')
 
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.

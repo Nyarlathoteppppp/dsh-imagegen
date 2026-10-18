@@ -27,7 +27,7 @@ import { buildFilePreview } from './file-preview.ts'
 import { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates } from './templates-store.ts'
 import { addTemplateFavorite, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 import { testStorage, type StorageSyncConfig } from './storage-sync.ts'
-import { checkForUpdate, CURRENT_VERSION, installUpdate } from './updater.ts'
+import { checkForUpdate, CURRENT_VERSION, installUpdate, updateInstallTarget, type UpdateHostContext } from './updater.ts'
 import { IMAGE_PRESETS } from './presets.ts'
 import { clearDiagnostics, listDiagnostics } from './diagnostics-store.ts'
 import { AGENT_IMAGE_API, CANVAS_API, CANVAS_SKILL_API, CONVERSATION_IMAGE_API, DATA_FOLDER_API, DEFAULT_TEMPLATE_SOURCE_ID, DIAGNOSTICS_API, GALLERY_API, GENERATE_API, HISTORY_API, IMAGEGEN_SETTINGS_NAMESPACE, IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, SETTINGS_API, STORAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, TASK_API, TEMPLATE_FAVORITES_API, TEMPLATES_API, UPDATE_API, USAGE_API, isChannelProtocolPreference, isTemplateSourceId, type CanvasAssetRef, type CanvasDocument, type CanvasSkillCatalog, type CanvasSkillConfigApplyRequest, type CanvasSkillConfigApplyResult, type CanvasSkillConfigSaveRequest, type CanvasSkillConfigSaveResult, type CanvasSkillInstallRequest, type CanvasSkillInstallResult, type CanvasSkillLibrary, type CanvasSkillRemoveResult, type CanvasSkillRunRequest, type CanvasSkillTask, type GeneratedImage, type GenerateRequest, type HistoryEntry, type HistoryEntryInput, type ModelMapping, type PresetProviderView, type TemplateFavorite, type TemplateListResult, type TemplateRefreshResult, type TemplateSample } from './protocol.ts'
@@ -84,6 +84,8 @@ export interface SettingsSeam {
 
 /** Route dependencies. */
 export interface ImageGenRoutesDeps {
+  /** Optional launcher facts; older hosts keep argv/env discovery. */
+  resolveUpdateContext?: () => UpdateHostContext
   /** The settings seam (namespace storage). */
   settings: SettingsSeam
   /** Internal namespace when the host entry differs from the bridge alias. */
@@ -911,7 +913,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         try {
-          writeJson(res, 200, { ok: true, update: await checkForUpdate() })
+          writeJson(res, 200, { ok: true, update: { ...await checkForUpdate(), ...updateInstallTarget(undefined, undefined, deps.resolveUpdateContext?.()) } })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'update-check-failed', message: messageOf(error) })
         }
@@ -935,7 +937,7 @@ export function makeRoutes(deps: ImageGenRoutesDeps): WebRoute[] {
             writeJson(res, 200, { ok: false, code: 'update-not-available', message: `version ${version} is not the latest available release` })
             return
           }
-          await installUpdate(version)
+          await installUpdate(version, undefined, undefined, undefined, deps.resolveUpdateContext?.())
           writeJson(res, 200, { ok: true, currentVersion: CURRENT_VERSION, updatedVersion: version, restartRequired: true })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'update-failed', message: messageOf(error) })

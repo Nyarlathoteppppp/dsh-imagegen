@@ -1130,6 +1130,9 @@ export interface UpdateInfo {
   publishedAt?: string
   /** Markdown release body shown in the update popover. */
   releaseNotes?: string
+  /** How the current launcher allows this plugin to be updated. */
+  installMode?: 'cli' | 'host-managed'
+  profile?: string
 }
 
 /** One history image reference as the browser consumes it (a served URL). */

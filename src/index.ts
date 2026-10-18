@@ -339,7 +339,7 @@ export { applySkillConfigSteps, configNote, configView, missingFields, parseSkil
 export { recipeFor, recipeNames } from './skill-config-recipes.ts'
 export { isZipDirectory, readZipDirectory, readZipEntry } from './zip.ts'
 export { canvasStore, isBlockedFileName, fileKindOf, MAX_CANVAS_FILE_BYTES, mimeFromFileName, safeFileName } from './canvas-store.ts'
-export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, installUpdate, profileFromProcess } from './updater.ts'
+export { checkForUpdate, clearUpdateCache, compareVersions, CURRENT_VERSION, installUpdate, profileFromProcess, updateInstallTarget } from './updater.ts'
 export { clearDiagnostics, listDiagnostics, networkErrorFields, redactDiagnosticText, recordDiagnostic, DIAGNOSTIC_MAX, type DiagnosticEntry } from './diagnostics-store.ts'
 
 /** The branded settings namespace of this plugin (the card edits it). */
@@ -1025,6 +1025,13 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
         const routes = makeRoutes({
           settings: seam,
           settingsNamespace,
+          resolveUpdateContext: () => {
+            const host = (sctx as unknown as { get(name: string): unknown }).get('profileContext') as { name?: unknown; dir?: unknown } | undefined
+            return {
+              ...(typeof host?.name === 'string' ? { profile: host.name } : {}),
+              ...(typeof host?.dir === 'string' ? { profileDir: host.dir } : {}),
+            }
+          },
           resolve: () => {
             const value = resolve()
             const channel = value.channels.find(candidate => candidate.id === value.defaultChannelId) ?? value.channels[0]

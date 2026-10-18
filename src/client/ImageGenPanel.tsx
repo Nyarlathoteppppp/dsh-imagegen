@@ -1031,8 +1031,8 @@ export function ImageGenPanel(props: {
       const result = await api.updateApply(update.latestVersion)
       setUpdateMessage(tt('update.success', { version: result.updatedVersion }))
       setUpdateResult('success')
-    } catch {
-      setUpdateMessage(tt('update.failed'))
+    } catch (caught) {
+      setUpdateMessage(`${tt('update.failed')}\n${errorMessage(caught)}`)
       setUpdateResult('failed')
     } finally {
       setUpdating(false)
@@ -2125,14 +2125,15 @@ export function ImageGenPanel(props: {
                     </span>
                     <button type="button" className={css.updateClose} aria-label={tt('update.close')} title={tt('update.close')} onClick={() => { setUpdateOpen(false) }}>×</button>
                   </header>
+                  {update.installMode === 'host-managed' ? <div className={css.updateManaged} role="status">{tt('update.hostManagedHint')}</div> : null}
                   {updateMessage !== null ? <div className={css.updateStatus} data-kind={updateResult === 'failed' ? 'failed' : 'ok'}>{updateMessage}</div> : null}
                   <div className={css.updateNotes}>
                     {update.releaseNotes !== undefined && update.releaseNotes.trim() !== '' ? renderMarkdown(update.releaseNotes) : <p>{tt('update.noNotes')}</p>}
                   </div>
                   <footer className={css.updatePopoverFooter}>
                     <a className={css.updateRelease} href={update.releaseUrl} target="_blank" rel="noreferrer">{tt('update.release')}</a>
-                    <Button variant="primary" size="sm" disabled={updating || updateResult === 'success'} onClick={() => { void applyUpdate() }}>
-                      {updating ? tt('update.installing') : updateResult === 'success' ? tt('update.installed') : tt('update.install')}
+                    <Button variant="primary" size="sm" disabled={updating || updateResult === 'success' || update.installMode === 'host-managed'} onClick={() => { void applyUpdate() }}>
+                      {update.installMode === 'host-managed' ? tt('update.hostManaged') : updating ? tt('update.installing') : updateResult === 'success' ? tt('update.installed') : tt('update.install')}
                     </Button>
                   </footer>
                 </section>
@@ -3009,7 +3010,7 @@ export function ImageGenPanel(props: {
                   </span>
                 ) : null}
               </div>
-              <div className={css.grid} data-count={images.length}>
+              <div className={css.grid} data-count={images.length} data-result-preview-grid="">
                 {images.map((image, index) => (
                   <figure
                     key={index}

@@ -1,7 +1,9 @@
 /** GitHub Release discovery and explicit, user-triggered plugin updates. */
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { PLUGIN_VERSION } from './protocol.ts'
+import { PLUGIN_VERSION, type UpdateInfo } from './protocol.ts'
+import { recordDiagnostic, redactDiagnosticText } from './diagnostics-store.ts'
+export type { UpdateInfo } from './protocol.ts'
 
 /** Keep this in sync with package.json for each published release. */
 export const CURRENT_VERSION = PLUGIN_VERSION
@@ -11,15 +13,9 @@ export const RELEASES_URL = 'https://api.github.com/repos/dickpy/dsh-imagegen/re
 const CHECK_TIMEOUT_MS = 10_000
 const CACHE_TTL_MS = 15 * 60_000
 
-export interface UpdateInfo {
-  currentVersion: string
-  latestVersion: string
-  updateAvailable: boolean
-  releaseUrl: string
-  publishedAt?: string
-  /** Markdown release body shown in the update popover. */
-  releaseNotes?: string
-}
+/** Optional launcher-owned facts, read without requiring a newer DSH package. */
+export interface UpdateHostContext { profile?: string; profileDir?: string }
+export interface UpdateInstallTarget { profile: string; installMode: 'cli' | 'host-managed' }
 
 interface GitHubRelease {
   tag_name?: unknown
@@ -80,38 +76,97 @@ export async function checkForUpdate(fetchFn: typeof fetch = fetch, now = Date.n
   return value
 }
 
-/** Resolve the profile that launched the current DSH process. */
-export function profileFromProcess(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env): string {
-  const envProfile = env.DSH_PROFILE?.trim()
-  if (envProfile !== undefined && /^[a-zA-Z0-9_-]+$/.test(envProfile)) return envProfile
-  const profileIndex = argv.indexOf('--profile')
-  const explicit = profileIndex >= 0 ? argv[profileIndex + 1]?.trim() : undefined
-  if (explicit !== undefined && /^[a-zA-Z0-9_-]+$/.test(explicit)) return explicit
-  if (argv.includes('web')) return 'web'
+const VALID_PROFILE = /^[a-zA-Z0-9_-]+$/
+const DESKTOP_HINT = '桌面端 profile 由 DSH 应用管理，本插件不能通过 dsh plugin 更新。请使用宿主支持的插件管理流程；若宿主暂不支持更新，请完全退出桌面应用后，使用与该 profile 一致的 pnpm 安装新版，再重启应用。'
+
+/** Explicit host facts win; Electron also passes an absolute profile directory. */
+export function profileFromProcess(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env, host: UpdateHostContext = {}): string {
+  for (const candidate of [host.profile, env.DSH_PROFILE]) {
+    const value = candidate?.trim()
+    if (value && VALID_PROFILE.test(value)) return value
+  }
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index] === '--profile' ? argv[index + 1]?.trim() : argv[index]?.startsWith('--profile=') ? argv[index]!.slice(10).trim() : undefined
+    if (value && VALID_PROFILE.test(value)) return value
+  }
+  for (const arg of [host.profileDir ?? '', ...argv]) {
+    const match = /[\\/]profiles[\\/]([a-zA-Z0-9_-]+)[\\/]?$/.exec(arg)
+    if (match) return match[1]!
+  }
+  if (env.DSH_DESKTOP === '1' || typeof process.versions.electron === 'string' || argv.some(arg => /[\\/]dsh-desktop-host[\\/]/.test(arg))) return 'desktop'
   return 'web'
 }
 
-/** Run the same official command documented for plugin installation. */
+/** A managed desktop profile must never be mutated by a guessed CLI command. */
+export function updateInstallTarget(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env, host: UpdateHostContext = {}): UpdateInstallTarget {
+  const profile = profileFromProcess(argv, env, host)
+  const desktop = profile === 'desktop' || env.DSH_DESKTOP === '1' || typeof process.versions.electron === 'string'
+    || argv.some(arg => /[\\/]dsh-desktop-host[\\/]/.test(arg))
+  return { profile, installMode: desktop ? 'host-managed' : 'cli' }
+}
+
+/** Bounded, credential-redacted package-manager output for both UI and logs. */
+function updateDiagnostic(value: string, limit = 6000): string {
+  return redactDiagnosticText(value
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1<redacted>@')
+    .replace(/((?:_authToken|npm_token|password)\s*[=:]\s*)[^\s]+/gi, '$1<redacted>'), limit)
+}
+
+/** Web/CLI updates retain the official package operation. Desktop instead
+ * explains its managed lifecycle before spawning anything (#41). */
 export function installUpdate(
   version: string,
   spawnFn: typeof spawn = spawn,
   argv: readonly string[] = process.argv,
   env: NodeJS.ProcessEnv = process.env,
+  host: UpdateHostContext = {},
 ): Promise<void> {
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    return Promise.reject(new Error('invalid update version'))
-  }
-  const profile = profileFromProcess(argv, env)
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) return Promise.reject(new Error('invalid update version'))
+  const { profile, installMode } = updateInstallTarget(argv, env, host)
   const command = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
-  const child = spawnFn(command, ['plugin', '--profile', profile, 'add', `${PACKAGE_NAME}@${version}`], {
-    shell: process.platform === 'win32',
-    stdio: 'ignore',
-  }) as ChildProcess
+  const args = ['plugin', '--profile', profile, 'add', `${PACKAGE_NAME}@${version}`]
+  const displayCommand = `${command} ${args.join(' ')}`
+  const started = Date.now()
+  const failure = (message: string): Error => {
+    const safe = updateDiagnostic(`profile: ${profile}\ncommand${installMode === 'host-managed' ? ' (not run)' : ''}: ${displayCommand}\n${message}`)
+    recordDiagnostic({ phase: 'config', channel: '', model: PACKAGE_NAME, mode: 'update', url: command, method: installMode === 'host-managed' ? 'CHECK' : 'SPAWN', message: safe, requestExcerpt: displayCommand, durationMs: Date.now() - started })
+    return new Error(safe)
+  }
+  if (installMode === 'host-managed') return Promise.reject(failure(DESKTOP_HINT))
   return new Promise((resolve, reject) => {
-    child.once('error', reject)
-    child.once('exit', (code, signal) => {
-      if (code === 0) resolve()
-      else reject(new Error(signal === null ? `plugin update exited with code ${code ?? 'unknown'}` : `plugin update terminated by ${signal}`))
+    let child: ChildProcess
+    try {
+      child = spawnFn(command, args, { shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'pipe'], env })
+    } catch (caught) {
+      reject(failure(caught instanceof Error ? caught.message : String(caught)))
+      return
+    }
+    let output = '', settled = false, timedOut = false
+    const append = (chunk: Buffer | string): void => { output = (output + String(chunk)).slice(-32_768) }
+    child.stdout?.on('data', append)
+    child.stderr?.on('data', append)
+    const timer = setTimeout(() => {
+      timedOut = true
+      try { child.kill() } catch { /* retain the timeout diagnostic */ }
+      finish('plugin update timed out after 10 minutes')
+    }, 10 * 60_000)
+    timer.unref()
+    const finish = (message?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (message === undefined) { resolve(); return }
+      const hint = /ERR_PNPM_UNEXPECTED_STORE/.test(output)
+        ? '\nThe pnpm store does not match this profile. Use the DSH installation that created it, or the same pnpm version/store recorded in node_modules/.modules.yaml; do not switch stores automatically.' : ''
+      const tail = output.trim().split(/\r?\n/).slice(-50).join('\n').slice(-4000)
+      reject(failure(`${message}${hint}${tail ? `\n${tail}` : ''}`))
+    }
+    child.once('error', error => finish(error.message))
+    // close waits until piped output is drained; exit can arrive before stderr.
+    child.once('close', (code, signal) => {
+      if (timedOut) return
+      finish(code === 0 ? undefined : signal ? `plugin update terminated by ${signal}` : `plugin update exited with code ${code ?? 'unknown'}`)
     })
   })
 }
