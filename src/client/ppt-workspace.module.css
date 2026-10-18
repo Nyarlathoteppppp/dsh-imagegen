@@ -44,3 +44,56 @@
 .field input, .field select { width: 100%; box-sizing: border-box; padding: 9px 10px; color: inherit; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; font: inherit; }
 .message { max-height: 240px; overflow: auto; padding: 12px; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--dsw-alias-bg-layer-2); border-radius: 10px; }
 @media (max-width: 760px) { .workspace { display: flex; flex-direction: column; height: auto; overflow: auto; } .sidebar, .results { overflow: visible; flex: none; padding: 16px; } .results { min-height: 360px; } }
+/* Compact source board: the first image replaces the empty upload hero. */
+.sidebar { padding: 18px; gap: 18px; }
+.eyebrow { margin-bottom: 6px; }
+.sidebar header h2 { margin-bottom: 6px; font-size: 17px; }
+.sourceSection { display: flex; flex-direction: column; gap: 10px; }
+.sourceHeading { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.sourceHeading > span { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.sourceHint { font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.inputs li { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 7px; min-width: 0; }
+.inputs .thumbnail { display: block; width: 100%; border: none; border-radius: 6px; background: var(--dsw-alias-bg-layer-2); padding: 0; overflow: hidden; }
+.inputs .thumbnail img { display: block; width: 100%; height: 86px; object-fit: contain; }
+.slideNumber { position: absolute; top: 11px; left: 11px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: rgb(15 18 24 / 75%); color: white; font-size: 10px; }
+.inputs .inputName { display: block; width: 100%; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inputActions { width: 100%; justify-content: space-between; }
+.inputActions button { padding: 2px 9px; background: transparent; border-color: transparent; }
+.inputs .addTile { border-style: dashed; padding: 0; min-height: 144px; }
+.addTile > button { width: 100%; height: 100%; flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; border: none; background: transparent; }
+.addTile > button span { font-size: 24px; }
+.addTile small { font-size: 11px; }
+.submitBar { display: flex; flex-direction: column; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.submitBar small { font-size: 10px; line-height: 1.7; color: var(--dsw-alias-label-secondary); }
+.taskPicker { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.taskPicker select { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; }
+.resultActions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.workspace .failure { padding: 14px 16px; border: 1px solid rgb(208 64 64 / 20%); border-radius: 10px; color: var(--dsw-alias-state-danger-primary, #b33535); background: rgb(208 64 64 / 5%); white-space: pre-wrap; overflow-wrap: anywhere; }
+.workspace .progress { white-space: pre-wrap; overflow-wrap: anywhere; }
+.overlay { position: fixed; inset: 0; z-index: 1600; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(0 0 0 / 40%); backdrop-filter: blur(5px); }
+.dialog { display: flex; flex-direction: column; width: min(800px, 100%); max-height: min(90vh, 900px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2); border-radius: 16px; box-shadow: 0 24px 80px rgb(0 0 0 / 25%); }
+.dialog > header { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 16px 22px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.dialog h3 { margin: 0; font-size: 16px; }
+.dialog > header button { flex: none; border: none; border-radius: 7px; padding: 6px 10px; background: var(--dsw-alias-bg-layer-2); color: inherit; font: inherit; font-size: 18px; cursor: pointer; }
+.dialogBody { overflow: auto; padding: 22px; }
+.sourcePreview { display: block; width: 100%; max-height: 70vh; object-fit: contain; }
+@media (max-width: 760px) { .overlay { padding: 12px; } .dialog { max-height: 94vh; } .dialogBody { padding: 16px; } .inputs { grid-template-columns: repeat(3, minmax(0, 1fr)); } .sidebar { gap: 14px; } }
+@media (max-width: 400px) { .inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Keep actions visible while only the source board scrolls on desktop. */
+@media (min-width: 761px) and (min-height: 601px) {
+  .sidebar { overflow: hidden; }
+  .sidebar > header, .sidebar > .ocr, .submitBar { flex: none; }
+  .sourceSection { flex: 1; min-height: 130px; overflow: auto; padding-right: 2px; }
+  .submitBar { margin-top: 0; }
+  .sidebar > .error { flex: none; max-height: 64px; overflow: auto; }
+}
+@media (max-height: 600px) and (min-width: 761px) {
+  .sidebar { overflow: auto; }
+  .sourceSection { flex: none; }
+  .submitBar { position: sticky; bottom: -18px; background: var(--dsw-alias-bg-layer-1); }
+}
+.inputs { flex: none; }
+.inputs .addTile { grid-column: 1 / -1; min-height: 38px; height: 38px; }
+.addTile > button { flex: none; flex-direction: row; min-height: 38px; height: 38px; padding: 4px 8px; }
+.addTile > button span { font-size: 20px; }

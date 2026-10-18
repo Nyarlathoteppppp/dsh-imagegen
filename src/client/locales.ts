@@ -3,6 +3,19 @@
  */
 
 export const zh = {
+  "ppt.agentFailed": "转换执行失败：{error}",
+  "ppt.noAgentReply": "执行器没有返回回复或产物。请检查 DSH 默认模型的连接、额度及 Agent 预设中的文件和命令工具。",
+
+  "ppt.close": "关闭",
+  "ppt.sources": "幻灯片图片",
+  "ppt.previewSource": "预览原图",
+  "ppt.addImages": "添加图片",
+  "ppt.orderHint": "按顺序生成幻灯片，可点击缩略图预览。",
+  "ppt.history": "转换记录",
+  "ppt.retry": "重新转换",
+  "ppt.checkSetup": "检查配置",
+  "ppt.settingsTitle": "图片转 PPT 配置",
+
   "ppt.updateSkill": "更新官方 skill",
   "ppt.reuseImages": "使用这些图片再次转换",
   "ppt.nav": "图片转 PPT",
@@ -24,7 +37,7 @@ export const zh = {
   "ppt.setupRequired": "请先在生图配置中安装 skill、运行环境，并启用技能与长任务。",
   "ppt.convert": "生成可编辑 PPT",
   "ppt.submitting": "正在提交…",
-  "ppt.openSettings": "打开生图配置",
+  "ppt.openSettings": "PPT 配置",
   "ppt.results": "转换结果",
   "ppt.resultCount": "{count} 个任务",
   "ppt.empty": "把图片变成可以修改的幻灯片",
@@ -1016,6 +1029,19 @@ export const zh = {
 } as const
 
 export const en: Record<keyof typeof zh, string> = {
+  "ppt.agentFailed": "Conversion execution failed: {error}",
+  "ppt.noAgentReply": "The agent returned no reply or artifact. Check the DSH default model connection/quota and the preset file and command tools.",
+
+  "ppt.close": "Close",
+  "ppt.sources": "Slide images",
+  "ppt.previewSource": "Preview source",
+  "ppt.addImages": "Add images",
+  "ppt.orderHint": "Slide order follows the thumbnails. Click to preview.",
+  "ppt.history": "Conversion history",
+  "ppt.retry": "Retry conversion",
+  "ppt.checkSetup": "Check settings",
+  "ppt.settingsTitle": "Image to PPT settings",
+
   "ppt.updateSkill": "Update upstream skill",
   "ppt.reuseImages": "Use these images again",
   "ppt.nav": "Image to PPT",
@@ -1037,7 +1063,7 @@ export const en: Record<keyof typeof zh, string> = {
   "ppt.setupRequired": "Install the skill and runtime in image settings, and enable skills and long-running tasks.",
   "ppt.convert": "Create editable PPT",
   "ppt.submitting": "Submitting…",
-  "ppt.openSettings": "Open image settings",
+  "ppt.openSettings": "PPT settings",
   "ppt.results": "Conversions",
   "ppt.resultCount": "{count} tasks",
   "ppt.empty": "Turn images into slides you can edit",
@@ -2019,6 +2045,19 @@ export type ImageGenKey = keyof typeof zh
 
 /** Russian mirror of every key (полный словарь интерфейса). */
 export const ru: Record<keyof typeof zh, string> = {
+  "ppt.agentFailed": "Ошибка преобразования: {error}",
+  "ppt.noAgentReply": "Агент не вернул ответ или файл. Проверьте подключение/квоту модели DSH и инструменты файлов и команд.",
+
+  "ppt.close": "Закрыть",
+  "ppt.sources": "Изображения слайдов",
+  "ppt.previewSource": "Просмотр оригинала",
+  "ppt.addImages": "Добавить изображения",
+  "ppt.orderHint": "Порядок слайдов соответствует миниатюрам. Нажмите для просмотра.",
+  "ppt.history": "История преобразований",
+  "ppt.retry": "Повторить",
+  "ppt.checkSetup": "Проверить настройки",
+  "ppt.settingsTitle": "Настройки изображения в PPT",
+
   "ppt.updateSkill": "Обновить навык",
   "ppt.reuseImages": "Повторить с этими изображениями",
   "ppt.nav": "Изображение → PPT",

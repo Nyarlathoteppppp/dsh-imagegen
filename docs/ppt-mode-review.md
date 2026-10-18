@@ -27,3 +27,5 @@
 未验证：真实用户 Electron 宿主的 Agent 权限、真实图像 API/PaddleOCR 服务质量、复杂页面最终可编辑程度。Windows 路径和Python启动器有专门分支，但未在Windows机器实测。
 
 本功能随1.9.0发布。
+
+1.9.1 的运行错误与界面修复见 [修复审核说明](ppt-191-review.md)。
