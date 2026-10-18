@@ -4,6 +4,7 @@ import type { CanvasAssetRef, CanvasSkillCatalog, CanvasSkillTask } from '../pro
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
+import { CanvasFileOverlay } from './CanvasFilePreview.tsx'
 import { PptSetup, PPT_SKILL_NAME } from './PptSetup.tsx'
 import css from './ppt-workspace.module.css'
 
@@ -50,7 +51,9 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
   const [error, setError] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<CanvasAssetRef>()
-  useEffect(() => { if (!active) { setSettingsOpen(false); setSourcePreview(undefined) } }, [active])
+  const [pptPreview, setPptPreview] = useState<CanvasAssetRef>()
+  const [diagnostic, setDiagnostic] = useState<CanvasSkillTask>()
+  useEffect(() => { if (!active) { setSettingsOpen(false); setSourcePreview(undefined); setPptPreview(undefined); setDiagnostic(undefined) } }, [active])
   const [selected, setSelected] = useState<string>()
   const fileInput = useRef<HTMLInputElement>(null)
   const uploadQueue = useRef(Promise.resolve())
@@ -163,22 +166,28 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
           <div className={css.resultActions}>
             <button type="button" disabled={busy || uploading} onClick={() => { commit(focused.pptImages ?? []); setError('') }}>{tt('ppt.reuseImages')}</button>
             {focused.status === 'failed' || focused.status === 'cancelled' ? <button type="button" disabled={!ready || busy || uploading || !focused.pptImages?.length} onClick={() => { commit(focused.pptImages ?? []); void submit(focused.pptImages) }}>{tt('ppt.retry')}</button> : null}
-            {focused.status === 'failed' ? <button type="button" onClick={() => setSettingsOpen(true)}>{tt('ppt.checkSetup')}</button> : null}
+            {focused.status === 'failed' ? <><button type="button" onClick={() => setSettingsOpen(true)}>{tt('ppt.checkSetup')}</button><button type="button" data-ppt-diagnostic="" onClick={() => setDiagnostic(focused)}>{tt('ppt.diagnostic')}</button></> : null}
           </div>
-          <div className={css.sourceStrip}>{focused.pptImages?.map((image, index) => <img key={index} src={image.url} alt={`Slide ${index + 1}`} />)}</div>
           {focused.output?.warnings.map((warning, index) => <p key={index} className={css.note}>{warning}</p>)}
           <div className={css.outputs}>{focused.output?.nodes.map(node => {
             const asset = node.metadata?.asset
-            if (!asset) return null
-            return <article key={node.id}>
-              {asset.mime.startsWith('image/') ? <img src={`${asset.url}?inline=1`} alt={asset.name || node.title} /> : <span className={css.fileIcon}>{asset.name?.toLowerCase().endsWith('.pptx') ? 'PPTX' : 'FILE'}</span>}
-              <strong>{asset.name || node.title}</strong><a href={asset.url} download={asset.name}>{tt('download')}</a>
+            if (!asset || !asset.name?.toLowerCase().endsWith('.pptx')) return null
+            return <article key={node.id} className={css.deckCard} data-ppt-deck="">
+              <span className={css.fileIcon}>PPTX</span>
+              <strong>{asset.name || node.title}</strong>
+              <div className={css.deckActions}><button type="button" data-ppt-preview="" onClick={() => setPptPreview(asset)}>{tt('ppt.previewDeck')}</button><a href={asset.url} download={asset.name}>{tt('download')}</a></div>
+              <small>{tt('ppt.previewHint')}</small>
             </article>
           })}</div>
         </section> : null}
       </>}
     </main>
     {settingsOpen ? <PptDialog title={tt('ppt.settingsTitle')} close={() => setSettingsOpen(false)}><PptSetup /></PptDialog> : null}
+    {diagnostic ? <PptDialog title={tt('ppt.diagnostic')} close={() => setDiagnostic(undefined)}>
+      <p className={css.diagnosticHint}>{tt(diagnostic.agentSessionId ? 'ppt.diagnosticHint' : 'ppt.legacyDiagnostic')}</p>
+      <textarea className={css.diagnosticText} readOnly rows={14} aria-label={tt('ppt.diagnostic')} onFocus={event => event.currentTarget.select()} value={JSON.stringify({ taskId: diagnostic.id, status: diagnostic.status, startedAt: new Date(diagnostic.startedAt).toISOString(), finishedAt: diagnostic.finishedAt ? new Date(diagnostic.finishedAt).toISOString() : undefined, agentSessionId: diagnostic.agentSessionId, runDirectory: diagnostic.runDirectory, error: diagnostic.error, inputCount: diagnostic.pptImages?.length }, null, 2)} />
+    </PptDialog> : null}
+    {pptPreview ? createPortal(<CanvasFileOverlay key={pptPreview.assetId} api={api} asset={pptPreview} fileKind="office" title={pptPreview.name || 'PPTX'} onClose={() => setPptPreview(undefined)} />, document.body) : null}
     {sourcePreview ? <PptDialog title={sourcePreview.name || tt('ppt.previewSource')} close={() => setSourcePreview(undefined)}><img className={css.sourcePreview} src={sourcePreview.url} alt={sourcePreview.name || ''} /></PptDialog> : null}
   </div>
 }

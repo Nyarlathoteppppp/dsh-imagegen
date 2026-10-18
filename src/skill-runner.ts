@@ -849,6 +849,7 @@ export class SkillRunner {
     const target = inputs.find(input => request.nodeIds.includes(input.node.id)) ?? inputs[0]!
     const runRoot = this.options.runRoot().trim() === '' ? path.join(this.options.dataRoot(), 'canvas', 'runs') : this.options.runRoot().trim()
     const runDir = path.join(runRoot, request.canvasId, task.id)
+    if (task.canvasId === 'ppt') task.runDirectory = runDir
     const inputDir = path.join(runDir, 'input')
     const outputDir = path.join(runDir, 'output')
     await fs.mkdir(inputDir, { recursive: true })
@@ -912,8 +913,10 @@ export class SkillRunner {
     const cancelled = (): boolean => task.status === 'cancelled'
     try {
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
+      const sessionId = newId('skillagent')
+      if (task.canvasId === 'ppt') { task.agentSessionId = sessionId; await this.persistPpt(task) }
       handle = await agents.create({
-        sessionId: newId('skillagent'),
+        sessionId,
         cwd: runDir,
         systemPrompt,
         signal: controller.signal,

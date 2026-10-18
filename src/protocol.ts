@@ -549,6 +549,9 @@ export interface CanvasSkillOutput {
 }
 
 export interface CanvasSkillTask {
+  /** Trace identifiers for finding the corresponding host execution log. */
+  agentSessionId?: string
+  runDirectory?: string
   /** Standalone PPT conversions retain their ordered input thumbnails. */
   pptImages?: CanvasAssetRef[]
   id: string

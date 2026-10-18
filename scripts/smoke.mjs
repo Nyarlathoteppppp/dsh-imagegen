@@ -2824,6 +2824,8 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
     const restored = await restarted.pptTasks()
     assert.equal(restored[0].id, task.id)
     assert.equal(restored[0].status, 'completed')
+    assert.ok(restored[0].agentSessionId?.startsWith('skillagent-'))
+    assert.ok(restored[0].runDirectory?.includes(task.id))
     assert.equal(restored[0].output.nodes[0].metadata.asset.name, 'final.pptx')
     for (const bad of ['bad-zip', 'wrong-count', 'no-deck']) {
       mode = bad
@@ -5640,6 +5642,11 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(pptSubmissions[0].images[0].name, 'second.png')
     assert.equal(pptSubmissions[0].offlineOcr, true)
     assert.ok(await waitUntil(() => pptView.querySelector('a[download="final.pptx"]')))
+    assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'only final PPT cards are shown in results')
+    pptView.querySelector('[data-ppt-preview]').click()
+    await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="final.pptx"]')
+    assert.ok(await waitUntil(() => jsdomDocument.querySelector('[role="dialog"]')?.textContent.includes('文件预览正文')))
+    jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"] [aria-label="关闭预览"]').click()
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(pptView.hidden, true)

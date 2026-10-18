@@ -10,6 +10,7 @@ const assets = [1, 2].map(index => ({ assetId: `slide-${index}.png`, url: '/slid
 let task: CanvasSkillTask | undefined
 const api = {
   async canvasFileUpload(file: File) { return { ...assets[0], name: file.name } },
+  async canvasFilePreview() { return { kind: 'slides', format: 'pptx', slides: [{ title: 'AI PLATFORM ROADMAP', lines: ['Editable presentation content', 'Knowledge → Workflow → Intelligence'], images: [] }, { title: 'NEXT STEPS', lines: ['Review the generated PPT in PowerPoint'], images: [] }], truncated: false } },
   async pptTasks() { return task ? [task] : [] },
   async canvasSkillsList() { return { skills: [], installed: ['image-to-editable-ppt'], agentAvailable: true, registryAvailable: true } },
   async canvasSkillLibrary() { return { entries: [{ name: 'image-to-editable-ppt', config: { values: [{ id: 'paddle-ocr-token', set: true }] } }] } },
@@ -27,6 +28,7 @@ function Preview() {
     <button onClick={() => {
       task = { id: 'ppt-preview', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'completed', startedAt: Date.now() - 204000, pptImages: assets, stage: '转换完成', output: { nodes: [{ id: 'deck', type: 'file', title: 'editable-deck.pptx', x: 0, y: 0, width: 300, height: 170, metadata: { asset: { ...assets[0], assetId: 'deck.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', name: 'editable-deck.pptx', url: '/deck.pptx' } } }, { id: 'preview', type: 'file', title: 'preview.png', x: 0, y: 0, width: 300, height: 170, metadata: { asset: { ...assets[0], name: 'preview.png' } } }], connections: [], warnings: [] } }
     }}>示例完成</button>
+    <button onClick={() => { if (task) task = { ...task, status: 'failed', error: 'Model API returned 401', agentSessionId: 'skillagent-preview', runDirectory: '/example/ppt/run' } }}>示例失败</button>
     <button onClick={() => { task = undefined }}>清空示例</button>
   </header>{setup ? <main className="settings"><h2>图片转可编辑 PPT 配置</h2><PptSetup /></main> : <main><PptWorkspace api={api} active importRequest={importRequest} onImported={() => setImport(undefined)} /></main>}</div>
 }

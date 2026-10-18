@@ -3,6 +3,13 @@
  */
 
 export const zh = {
+  "ppt.diagnostic": "任务诊断",
+  "ppt.diagnosticHint": "这里保留任务、Agent 会话和运行目录，便于关联 DSH 运行日志。点击文本框可全选复制。",
+  "ppt.legacyDiagnostic": "这是旧任务，未保存 Agent 会话和原始错误，无法从这个通用报错恢复根因。请提供任务时间附近的 DSH 运行日志；点击文本框可复制任务信息。",
+
+  "ppt.previewDeck": "预览 PPT",
+  "ppt.previewHint": "内容预览支持逐页查看文字与内嵌图片；复杂版式请下载后用 PowerPoint 确认。",
+
   "ppt.agentFailed": "转换执行失败：{error}",
   "ppt.noAgentReply": "执行器没有返回回复或产物。请检查 DSH 默认模型的连接、额度及 Agent 预设中的文件和命令工具。",
 
@@ -1029,6 +1036,13 @@ export const zh = {
 } as const
 
 export const en: Record<keyof typeof zh, string> = {
+  "ppt.diagnostic": "Task diagnostics",
+  "ppt.diagnosticHint": "Use the task, agent session and directory to locate the DSH execution logs. Click the text area to select all.",
+  "ppt.legacyDiagnostic": "This older task did not retain its agent session or original error. Its root cause cannot be recovered from this generic message. Provide DSH logs around the task time. Click to copy the task details.",
+
+  "ppt.previewDeck": "Preview PPT",
+  "ppt.previewHint": "Content preview shows slide text and embedded pictures. Check complex layouts in PowerPoint after downloading.",
+
   "ppt.agentFailed": "Conversion execution failed: {error}",
   "ppt.noAgentReply": "The agent returned no reply or artifact. Check the DSH default model connection/quota and the preset file and command tools.",
 
@@ -2045,6 +2059,13 @@ export type ImageGenKey = keyof typeof zh
 
 /** Russian mirror of every key (полный словарь интерфейса). */
 export const ru: Record<keyof typeof zh, string> = {
+  "ppt.diagnostic": "Диагностика задания",
+  "ppt.diagnosticHint": "Используйте задание, сеанс агента и каталог для поиска журналов DSH. Нажмите текст для выделения.",
+  "ppt.legacyDiagnostic": "Старое задание не сохранило сеанс агента и исходную ошибку. Для определения причины нужны журналы DSH за время выполнения.",
+
+  "ppt.previewDeck": "Просмотр PPT",
+  "ppt.previewHint": "Просмотр показывает текст и встроенные изображения слайдов. Сложную вёрстку проверяйте в PowerPoint.",
+
   "ppt.agentFailed": "Ошибка преобразования: {error}",
   "ppt.noAgentReply": "Агент не вернул ответ или файл. Проверьте подключение/квоту модели DSH и инструменты файлов и команд.",
 
