@@ -1,6 +1,6 @@
 # 模板库大抽屉审核版
 
-状态：开发分支 `feat/template-drawer`，待审核。未合并 main，未发布 GitHub Release 或 npm，package.json 保持 1.7.0。
+版本归档：以下记录 v1.8.0 合并前的审核内容与验证结果；正式安装与升级方式见 [v1.8.0 更新说明](releases/v1.8.0.md)。
 
 本分支后续已加入[图生图多图上传](multi-reference-review.md)，审核包包含两项更新。
 
