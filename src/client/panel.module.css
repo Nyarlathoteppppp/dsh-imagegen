@@ -2444,6 +2444,10 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   color: var(--dsw-alias-label-secondary);
 }
 
+.generationState {
+  min-height: 0;
+}
+
 .canvasStateHint {
   font-size: 12px;
   max-width: 380px;
