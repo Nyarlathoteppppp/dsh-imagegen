@@ -119,7 +119,7 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
   }
   return <div className={css.workspace} hidden={!active} data-ppt-workspace="">
     <aside className={css.sidebar}>
-      <header><span className={css.eyebrow}>IMAGE → PPTX</span><h2>{tt('ppt.title')}</h2><p>{tt('ppt.description')}</p></header>
+      <header className={css.intro}><div><span className={css.eyebrow}>IMAGE → PPTX</span><h2>{tt('ppt.title')}</h2><p>{tt('ppt.description')}</p></div><button type="button" data-ppt-open-settings="" onClick={() => setSettingsOpen(true)}>{tt('ppt.openSettings')}</button></header>
       <section className={css.sourceSection} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!busy) accept(Array.from(event.dataTransfer.files)) }}>
         <div className={css.sourceHeading}><strong>{tt('ppt.sources')}</strong><span>{images.length}/12</span></div>
         {images.length === 0 ? <button type="button" className={css.upload} data-ppt-upload-empty="" disabled={uploading || busy} onClick={() => fileInput.current?.click()}>
@@ -139,6 +139,7 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
         <small className={css.sourceHint}>{tt('ppt.orderHint')}</small>
         <input ref={fileInput} hidden type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={event => { accept(Array.from(event.target.files ?? [])); event.target.value = '' }} />
       </section>
+      <section className={css.options}>
       <fieldset className={css.ocr} disabled={busy}>
         <legend>{tt('ppt.ocrTitle')}</legend>
         <label><input type="radio" name="ppt-ocr" checked={!offline} onChange={() => { ocrChosen.current = true; setOffline(false) }} />{tt('ppt.ocrPaddle')}</label>
@@ -149,10 +150,10 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
       {!ready ? <p className={css.note}>{catalog?.reason || tt('ppt.setupRequired')}</p> : null}
       <footer className={css.submitBar}>
         <button type="button" className={css.primary} data-ppt-convert="" disabled={!ready || busy || uploading || images.length === 0} onClick={() => { void submit() }}>{tt(busy ? 'ppt.submitting' : 'ppt.convert')}</button>
-        <button type="button" data-ppt-open-settings="" onClick={() => setSettingsOpen(true)}>{tt('ppt.openSettings')}</button>
         <small>{tt('ppt.processingHint')}</small>
       </footer>
       {error ? <p className={css.error} role="alert">{error}</p> : null}
+      </section>
     </aside>
     <main className={css.results}>
       <header className={css.resultHeader}><h3>{tt('ppt.results')}</h3><span>{tt('ppt.resultCount', { count: tasks.length })}</span></header>

@@ -28,7 +28,7 @@ function Preview() {
     <button onClick={() => {
       task = { id: 'ppt-preview', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'completed', startedAt: Date.now() - 204000, pptImages: assets, stage: '转换完成', output: { nodes: [{ id: 'deck', type: 'file', title: 'editable-deck.pptx', x: 0, y: 0, width: 300, height: 170, metadata: { asset: { ...assets[0], assetId: 'deck.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', name: 'editable-deck.pptx', url: '/deck.pptx' } } }, { id: 'preview', type: 'file', title: 'preview.png', x: 0, y: 0, width: 300, height: 170, metadata: { asset: { ...assets[0], name: 'preview.png' } } }], connections: [], warnings: [] } }
     }}>示例完成</button>
-    <button onClick={() => { if (task) task = { ...task, status: 'failed', error: 'Model API returned 401', agentSessionId: 'skillagent-preview', runDirectory: '/example/ppt/run' } }}>示例失败</button>
+    <button onClick={() => { if (task) task = { ...task, status: 'failed', outputs: [], error: 'Model API returned 401', agentSessionId: 'skillagent-preview', runDirectory: '/example/ppt/run' } }}>示例失败</button>
     <button onClick={() => { task = undefined }}>清空示例</button>
   </header>{setup ? <main className="settings"><h2>图片转可编辑 PPT 配置</h2><PptSetup /></main> : <main><PptWorkspace api={api} active importRequest={importRequest} onImported={() => setImport(undefined)} /></main>}</div>
 }

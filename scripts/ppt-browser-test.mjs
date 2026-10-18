@@ -66,18 +66,24 @@ try{
  assert.equal(await page.getByRole('dialog').count(),0)
  mkdirSync(new URL('../docs/images/',import.meta.url),{recursive:true})
  await page.locator('.fixture>main').screenshot({path:new URL('../docs/images/ppt-mode.png',import.meta.url).pathname})
- for(const viewport of [{width:390,height:780},{width:800,height:360},{width:1280,height:850}]){
+ for(const viewport of [{width:390,height:780},{width:800,height:360},{width:1280,height:850},{width:1920,height:1000}]){
   await page.setViewportSize(viewport)
   assert.ok(await page.locator('[data-ppt-workspace]').isVisible())
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`No horizontal overflow: ${viewport.width}`)
  }
  await page.getByRole('button',{name:'示例失败',exact:true}).click()
  await page.waitForSelector('[data-task-status=failed]')
+ const layout=await page.locator('[data-ppt-workspace]').evaluate(el=>{const results=el.querySelector('main');const options=el.querySelector('fieldset').parentElement;const sources=el.querySelector('[data-ppt-input]').parentElement.parentElement;const box=x=>{const r=x.getBoundingClientRect();return {top:r.top,bottom:r.bottom,width:r.width,height:r.height}};return {workspace:box(el),results:box(results),options:box(options),sources:box(sources)}})
+ assert.ok(layout.workspace.width<=1180,'wide screens keep a bounded workspace')
+ assert.ok(layout.results.top>=Math.max(layout.options.bottom,layout.sources.bottom),'results sit below both input cards')
+ assert.ok(layout.results.height<400,'failed results use content height rather than a full-screen panel')
+ await page.locator('[data-ppt-workspace]').screenshot({path:new URL('../docs/images/ppt-mode-failed-wide.png',import.meta.url).pathname})
  await page.locator('[data-ppt-diagnostic]').click()
  const diagnostic=JSON.parse(await page.getByRole('textbox',{name:'任务诊断',exact:true}).inputValue())
  assert.equal(diagnostic.agentSessionId,'skillagent-preview')
  assert.equal(diagnostic.error,'Model API returned 401')
  await page.keyboard.press('Escape')
+ await page.setViewportSize({width:1280,height:850})
  await page.locator('[data-ppt-open-settings]').click()
  await page.locator('[data-ppt-setup] input[type=password]').first().waitFor()
  await page.locator('[data-ppt-setup] input[type=password]').nth(1).fill('fixture-token-not-a-real-secret')
@@ -88,5 +94,5 @@ try{
  await page.evaluate(() => document.fonts.ready)
  await page.getByRole('dialog',{name:'图片转 PPT 配置',exact:true}).screenshot({path:new URL('../docs/images/ppt-settings.png',import.meta.url).pathname})
  assert.deepEqual(errors,[])
- console.log('PPT browser checks passed: upload, order, conversion, cancel, result links, configuration, three viewports.')
+ console.log('PPT browser checks passed: upload, order, conversion, cancel, result links, configuration, four viewports and bounded failure layout.')
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve))}
