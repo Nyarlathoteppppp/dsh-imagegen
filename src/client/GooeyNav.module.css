@@ -14,6 +14,7 @@
   --gooey-pill-ink: #ffffff;
   --gooey-ink: #5b5e6b;
   position: relative;
+  max-width: 100%;
   font-size: 13px;
 }
 
@@ -222,3 +223,5 @@
     animation: none;
   }
 }
+
+@media (max-width: 760px) { .container { overflow-x: auto; scrollbar-width: none; } .container nav { width: max-content; } }

@@ -34,3 +34,6 @@ Thumbs.db
 # Local generation animation fixture output
 .generation-preview/
 .gallery-preview/
+
+# Local editable PPT component fixture output
+.ppt-preview/

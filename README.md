@@ -11,7 +11,7 @@
 
   <p><strong>在 DeepSeek Harness 里，生成、编辑、管理，一站完成。</strong></p>
   <p><strong>快速导航</strong></p>
-  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">👥 QQ 交流群</a></p>
+  <p><a href="#quick-start">🚀 快速开始</a>　·　<a href="#canvas">无限画布</a>　·　<a href="#ecommerce">电商套图</a>　·　<a href="#txt2img">文生图 / 图生图</a>　·　<a href="#editable-ppt">图片转 PPT</a>　·　<a href="#gallery">模板 / 画廊</a>　·　<a href="#configuration">模型配置</a>　·　<a href="#community">👥 QQ 交流群</a></p>
 </div>
 
 <a id="quick-start"></a>
@@ -42,6 +42,7 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 | 能力 | 用途 |
 | --- | --- |
 | **无限画布** | 把提示词、参考图和生成节点连成可迭代的创作流程。 |
+| **图片转可编辑 PPT** | 上传图片或从生图结果一键带入，直接执行官方 skill，下载可编辑 PPTX。 |
 | **电商套图** | 从商品参考图生成主图、卖点图、场景图等成套素材。 |
 | **文生图 / 图生图** | 使用兼容的生图渠道生成、编辑并比较图片。 |
 | **对话与 Agent** | 在 DSH 对话中生成图片、继续编辑，并把结果带回会话。 |
@@ -175,3 +176,12 @@ dsh plugin --profile web add ./dickpy-dsh-imagegen-<版本>.tgz
 [Apache-2.0](./LICENSE)
 
 内置模板所引用的第三方项目与许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
+<a id="editable-ppt"></a>
+## 图片转可编辑 PPT
+
+在「图片转 PPT」上传最多12张 PNG/JPG/WebP（每张20MB），调整缩略图顺序后转换；文生图、图生图、多模型对比和放大预览中的「生成可编辑 PPT」可直接带入。
+
+首次在「生图配置 → 图片转可编辑 PPT」安装 [官方 skill](https://github.com/ningzimu/image-to-editable-ppt-skill) 与运行环境，需 Python 3.10+。按需填写 PaddleOCR token、图像 API 并保存应用；也可选离线文字检测，图像后端支持已有 Codex OAuth。转换由宿主默认模型及 Agent 预设执行，需文件/命令能力，多页需子 Agent；请启用技能和长任务。
+
+转换可能耗时数分钟并产生模型/API费用。任务支持取消、刷新恢复、下载及复用图片；宿主重启会中断在途任务。还原质量取决于原图、OCR和模型，失败时会保留明确状态。详细前提和审核范围见 [PPT模式说明](docs/ppt-mode-review.md)。

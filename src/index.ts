@@ -307,6 +307,7 @@ import { installFromArchive, installFromUrl, knownSkillUrl, listLibrary, listLoc
 import { applySkillConfigSteps, asConfigDict, configNote, configView, missingFields, parseSkillConfigManifest, readSkillConfigFile, skillConfigKey, valuesFor, type SkillConfigDeclaration, type SkillConfigIssue, type SkillConfigStore } from './skill-config.ts'
 import { recipeFor } from './skill-config-recipes.ts'
 import { EDITABLE_PPT_SKILL, type ExternalSkillSummary } from './skills-catalog.ts'
+import { PptRuntime } from './ppt-runtime.ts'
 import { canvasStore } from './canvas-store.ts'
 import { imageGenLanguageOf, interpolate } from './locale-tables.ts'
 
@@ -330,6 +331,7 @@ export { appendGallery, clearGallery, listGallery, readGalleryImage, removeGalle
 export { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates, syncAllTemplates, clearTemplateMemo } from './templates-store.ts'
 export { addTemplateFavorite, clearTemplateFavoritesMemo, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 export { putObject, setStorageSyncHandler, testStorage, type StorageSyncConfig } from './storage-sync.ts'
+export { PptRuntime } from './ppt-runtime.ts'
 export { SkillRunner, setSkillTranslate, setSkillLanguage, canvasSkillCopy } from './skill-runner.ts'
 export { builtinCanvasSkills, canvasSkillCatalog, EDITABLE_PPT_SKILL, findCanvasSkill, isEditablePptSkill, mergeExternalSkills, tierOfExternalSkill } from './skills-catalog.ts'
 export { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
@@ -735,6 +737,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
   // the host agent runtime. `setSkillRuntime` is called from the soft injection
   // below, and routes read it per request — so a deployment without the agent
   // runtime still gets the built-in light actions.
+  const pptRuntime = new PptRuntime(imageDataRoot, async () => bundleDirOf(await entryPathFor(EDITABLE_PPT_SKILL)))
   let skillRunner: SkillRunner | undefined
   const resolveSkills = (): EffectiveConfig['skills'] => resolve().skills
   skillRunner = new SkillRunner({
@@ -751,6 +754,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
     heavyTimeoutMs: () => resolveSkills().heavyTimeoutMs,
     dataRoot: () => imageDataRoot(),
     pptInstallUrl: knownSkillUrl(EDITABLE_PPT_SKILL),
+    pptCommand: () => pptRuntime.command(),
   })
 
   // ---------------------------------------------------------- skill config
@@ -927,7 +931,12 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
         const runRoot = configRunRoot(request.name)
         await mkdir(runRoot, { recursive: true })
         const skillDir = bundleDirOf((await readLocalSkill(skillsRoot(), request.name).catch(() => undefined))?.path)
-        const results = await applySkillConfigSteps(found.declaration, values, {
+        const declaration = request.name !== EDITABLE_PPT_SKILL ? found.declaration : {
+          ...found.declaration,
+          manifest: { ...found.declaration.manifest, steps: await Promise.all(found.declaration.manifest.steps.map(async step =>
+            step.kind !== 'command' || step.argv[0] !== 'editppt' ? step : { ...step, argv: [await pptRuntime.command(), ...step.argv.slice(1)] })) },
+        }
+        const results = await applySkillConfigSteps(declaration, values, {
           runRoot,
           ...skillDir === undefined ? {} : { skillDir },
         })
@@ -1051,6 +1060,7 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           subscriptions,
           resolveStorage: () => resolve().storage,
           skills: skillRunner,
+          pptRuntime,
           skillLibrary,
         })
         const disposers = routes.map(route => ctx.webServer.register(route))

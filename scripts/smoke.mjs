@@ -2763,6 +2763,99 @@ await check('C11d heavy skills refuse to start without the agent runtime, then p
   assert.match(String(produced.metadata.asset.name), /\.pptx$/)
 })
 
+// Standalone conversion exercises real task persistence and the shared runner,
+// substituting only the agent/API calls (no paid models in regression tests).
+await check('C11ppt standalone PPT validates input, preserves order, persists results and rejects incomplete outputs', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-conversion-'))
+  const assets = ['first.png', 'second.png'].map(assetId => ({ assetId, url: `/api/dsh-imagegen/canvas/asset/${assetId}`, mime: 'image/png', bytes: pngBytes.length, width: 1, height: 1, origin: 'upload', name: assetId }))
+  let mode = 'ok', stopped = 0, recordedPrompt = '', recordedInputs = []
+  let release
+  const backend = {
+    ...canvasBackend,
+    async readAsset(id) { return assets.some(asset => asset.assetId === id) ? { data: pngBytes, mime: 'image/png' } : undefined },
+    async materialize(asset, target) { recordedInputs.push([asset.assetId, target]); writeFileSync(target, pngBytes) },
+  }
+  const options = { backend: { canvas: backend }, enabled: () => true, heavyEnabled: () => true, allowlist: () => [], runRoot: () => root, dataRoot: () => root, heavyTimeoutMs: () => 30_000, pptCommand: async () => '/test/python/bin/editppt' }
+  const runner = new host.SkillRunner(options)
+  const registry = { async list() { return [{ name: 'image-to-editable-ppt', description: 'PPT skill', path: '/upstream/image-to-editable-ppt/SKILL.md' }] }, async get() { return { name: 'image-to-editable-ppt', content: '# upstream body\nFollow upstream commands.' } } }
+  runner.attach({ registry, agents: {
+    available: () => true,
+    async create(options) {
+      recordedPrompt = options.systemPrompt
+      return {
+        session: { deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'agent result' }] }] }, followup() {},
+        async whenIdle() {
+          if (mode === 'hold') await new Promise(resolve => { release = resolve })
+          if (mode === 'no-deck') return
+          const slides = mode === 'wrong-count' ? 1 : 2
+          const deck = mode === 'bad-zip' ? Buffer.from('not-a-pptx') : buildZip([
+            { name: 'ppt/presentation.xml', body: '<p:presentation/>' },
+            ...Array.from({ length: slides }, (_, index) => ({ name: `ppt/slides/slide${index + 1}.xml`, body: '<p:sld><p:sp>Editable text</p:sp></p:sld>' })),
+          ])
+          writeFileSync(join(options.cwd, 'output', 'final.pptx'), deck)
+        }, cancel() { stopped += 1; release?.() }, async dispose() {},
+      }
+    },
+  } })
+  const wait = async task => {
+    for (let index = 0; index < 200 && ['running', 'queued'].includes(task.status); index++) await new Promise(resolve => setTimeout(resolve, 10))
+    return task
+  }
+  try {
+    await assert.rejects(runner.runPpt({ images: [], offlineOcr: true }), /1.?12|图片|images/)
+    await assert.rejects(runner.runPpt({ images: [{ ...assets[0], assetId: 'missing' }], offlineOcr: true }), /图片|image/i)
+    const task = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(task.status, 'completed', JSON.stringify(task))
+    assert.deepEqual(recordedInputs.slice(0, 2).map(([id]) => id), ['first.png', 'second.png'])
+    assert.match(recordedPrompt, /upstream body/)
+    assert.match(recordedPrompt, /\/upstream\/image-to-editable-ppt\/SKILL.md/)
+    assert.match(recordedPrompt, /\/test\/python\/bin\/editppt/)
+    assert.match(recordedPrompt, /prepare --no-text-hints/)
+    assert.ok(task.output.nodes.some(node => node.metadata.asset?.name === 'final.pptx'))
+    // Final persistence finishes just after the terminal status becomes visible.
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const restarted = new host.SkillRunner(options)
+    const restored = await restarted.pptTasks()
+    assert.equal(restored[0].id, task.id)
+    assert.equal(restored[0].status, 'completed')
+    assert.equal(restored[0].output.nodes[0].metadata.asset.name, 'final.pptx')
+    for (const bad of ['bad-zip', 'wrong-count', 'no-deck']) {
+      mode = bad
+      const failed = await wait(await runner.runPpt({ images: assets, offlineOcr: false, language: 'en' }))
+      assert.equal(failed.status, 'failed', bad)
+      assert.ok(failed.error)
+    }
+    mode = 'hold'
+    const live = await runner.runPpt({ images: assets, offlineOcr: true })
+    for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10))
+    const queued = await runner.runPpt({ images: assets, offlineOcr: true })
+    assert.equal(await runner.cancel(queued.id), true)
+    assert.equal(queued.status, 'cancelled')
+    assert.equal(await runner.cancel(live.id), true)
+    assert.equal(live.status, 'cancelled')
+    assert.equal(stopped, 1)
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const interrupted = { ...task, id: 'skillrun-interrupted', status: 'running' }
+    writeFileSync(join(root, 'ppt-tasks', 'skillrun-interrupted.json'), JSON.stringify(interrupted))
+    const afterRestart = await restarted.pptTasks()
+    assert.equal(afterRestart.find(item => item.id === interrupted.id).status, 'failed')
+    assert.ok(afterRestart.find(item => item.id === interrupted.id).error)
+    const noAgent = new host.SkillRunner(options)
+    await assert.rejects(noAgent.runPpt({ images: assets, offlineOcr: true }))
+  } finally { release?.(); rmSync(root, { recursive: true, force: true }) }
+})
+
+await check('C11ppt routes refuse bad sources and expose durable conversion history', async () => {
+  for (const body of [{ images: [], offlineOcr: true }, { images: [{ assetId: '../escape' }], offlineOcr: true }, { images: [{ assetId: 'x.png' }] }]) {
+    const result = await post('/api/dsh-imagegen/ppt/run', body)
+    assert.equal(result.body.ok, false)
+    assert.equal(result.body.code, 'bad-request')
+  }
+  const list = await post('/api/dsh-imagegen/ppt/tasks', {})
+  assert.equal(list.body.ok, true)
+  assert.ok(Array.isArray(list.body.tasks))
+})
+
 await check('C11e an unknown skill id and a missing canvas fail with copy, not a crash', async () => {
   const unknown = await post('/api/dsh-imagegen/canvas/skills/run', {
     canvasId: 'nope', skillId: 'skill:does-not-exist', nodeIds: [],
@@ -3201,7 +3294,7 @@ await check('C13c the built-in recipe covers image-to-editable-ppt and a sidecar
     const recipe = await host.readCanvasSkillConfig({ name: 'image-to-editable-ppt', root, store: { values: {}, secrets: {} } })
     assert.equal(recipe.declaration.source, 'plugin')
     assert.deepEqual(recipe.declaration.manifest.fields.map(field => field.id), ['image-api-key', 'image-base-url', 'image-model', 'paddle-ocr-token'])
-    assert.deepEqual(recipe.view.missing, ['图像 API 密钥'])
+    assert.deepEqual(recipe.view.missing, []) // OAuth is supported; API fallback is optional
     assert.equal(recipe.view.applicable, true)
     // The declared command is exactly what the skill documents.
     assert.ok(recipe.declaration.manifest.steps[0].argv.includes('editppt'))
@@ -4007,6 +4100,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const previewRequests = []
   /** Every fetch path the client issued (debug aid for the canvas tools). */
   const requestPaths = []
+  let pptSubmissions = [], pptUploaded = [], pptClientTasks = []
   let updateInstallMode = 'cli'
   let updateApplyCalls = 0
   const canvasDocument = {
@@ -4024,6 +4118,22 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
+    if (path.endsWith('/ppt/tasks')) return { ok: true, json: async () => ({ ok: true, tasks: pptClientTasks }) }
+    if (path.endsWith('/canvas/skills/list')) return { ok: true, json: async () => ({ ok: true, skills: [], installed: ['image-to-editable-ppt'], agentAvailable: true, registryAvailable: true }) }
+    if (path.endsWith('/canvas/skills/library')) return { ok: true, json: async () => ({ ok: true, library: { entries: [] } }) }
+    if (path.includes('/canvas/file/upload?')) {
+      const name = new URL(path, 'http://localhost').searchParams.get('name')
+      const asset = { assetId: `${pptUploaded.length + 1}.png`, url: `/api/dsh-imagegen/canvas/asset/${pptUploaded.length + 1}.png`, mime: init.headers['content-type'], name, bytes: 12, width: 12, height: 12, origin: 'upload' }
+      pptUploaded.push(asset)
+      return { ok: true, json: async () => ({ ok: true, asset }) }
+    }
+    if (path.endsWith('/ppt/run')) {
+      const payload = JSON.parse(init.body)
+      pptSubmissions.push(payload)
+      const task = { id: 'ppt-client-1', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'completed', startedAt: Date.now(), pptImages: payload.images, output: { nodes: [{ id: 'ppt-file', type: 'file', title: 'final.pptx', metadata: { asset: { assetId: 'deck.pptx', url: '/api/dsh-imagegen/canvas/asset/deck.pptx', name: 'final.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } } }], connections: [], warnings: [] } }
+      pptClientTasks = [task]
+      return { ok: true, json: async () => ({ ok: true, task }) }
+    }
     if (path.endsWith('/update/check')) return { ok: true, json: async () => ({ ok: true, update: { currentVersion: '1.7.0', latestVersion: '9.9.9', updateAvailable: true, releaseUrl: 'https://github.com/dickpy/dsh-imagegen/releases', releaseNotes: 'Fixture notes', profile: updateInstallMode === 'cli' ? 'web' : 'desktop', installMode: updateInstallMode } }) }
     if (path.endsWith('/update/apply')) { updateApplyCalls += 1; return { ok: true, json: async () => updateInstallMode === 'host' ? { ok: true, updatedVersion: '9.9.9', restartRequired: true } : ({ ok: false, code: 'update-failed', message: 'profile: web\nERR_PNPM_UNEXPECTED_STORE: test store mismatch' }) } }
     if (path.endsWith('/settings/describe')) {
@@ -4288,6 +4398,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     CustomEvent: jsdomWindow.CustomEvent,
     HTMLElement: jsdomWindow.HTMLElement,
     FileReader: jsdomWindow.FileReader,
+    File: jsdomWindow.File,
+    atob: jsdomWindow.atob.bind(jsdomWindow),
     // image-ops decodes asset URLs through `new Image()`; jsdom never loads
     // resources, so the stub resolves onload on the next tick.
     Image: class SmokeImage {
@@ -4589,7 +4701,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Gallery keeps the sidebar history visible, and selecting one history
     // group returns the center workspace to text-to-image.
     const tablistButtons = [...view.querySelectorAll('[role="tablist"] button')]
-    assert.equal(tablistButtons.length, 6, 'top nav has four entries and the normal workspace shows two generation modes')
+    assert.equal(tablistButtons.length, 7, 'top nav has five entries and the normal workspace shows two generation modes')
     const ecommerceSwitch = tablistButtons.find(button => button.textContent?.includes('电商模式'))
     assert.ok(ecommerceSwitch !== undefined, 'ecommerce top-nav entry is present')
     const normalSwitch = tablistButtons.find(button => button.textContent?.includes('普通生图'))
@@ -4601,7 +4713,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const ecommerceWorkspace = view.querySelector('[data-ecommerce-workspace]')
     assert.ok(ecommerceWorkspace !== null, 'ecommerce workspace is rendered')
     assert.equal(jsdomWindow.getComputedStyle(ecommerceWorkspace).fontSize, '12px', 'ecommerce UI inherits the compact panel type scale')
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 4, 'generation sub-modes hide in the ecommerce workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 5, 'generation sub-modes hide in the ecommerce workspace')
     assert.equal([...view.querySelectorAll('textarea')].some(textarea => (textarea.getAttribute('placeholder') ?? '').includes('描述你想要的画面')), false, 'normal prompt card is hidden in ecommerce workspace')
     const ecommerceName = view.querySelector('input[placeholder="商品名称（必填）"]')
     assert.ok(ecommerceName !== null, 'ecommerce product form is rendered')
@@ -4679,7 +4791,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     // Back to the normal workspace via the top nav: gallery works as before.
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 50))
-    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 6, 'generation sub-modes return in the normal workspace')
+    assert.equal(view.querySelectorAll('[role="tablist"] button').length, 7, 'generation sub-modes return in the normal workspace')
     const galleryPill = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent?.includes('素材库'))
     assert.ok(galleryPill !== undefined, '素材库入口存在')
     galleryPill.click()
@@ -4802,7 +4914,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const editMode = [...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '图生图')
     editMode.click()
     await new Promise(resolve => setTimeout(resolve, 40))
-    const editUpload = view.querySelector('[data-edit-references] input[type="file"]')
+    let editUpload = view.querySelector('[data-edit-references] input[type="file"]')
     Object.defineProperty(editUpload, 'files', { value: { 0: new dom.window.File(['ref'], 'retained-reference.png', { type: 'image/png' }), length: 1 }, configurable: true })
     editUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 50))
@@ -4817,10 +4929,12 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.ok(view.querySelector('img[alt="retained-reference.png"]'), 'template retains edit mode and reference image')
     assert.equal(view.querySelector('textarea').value, 'A reusable template prompt', 'edit prompt receives template')
     assert.equal(editUpload.multiple, true, 'edit picker supports multiple files')
+    editUpload = view.querySelector('[data-edit-references] input[type="file"]')
     const extraRefs = [new dom.window.File(['second'], 'second.png', { type: 'image/png' }), new dom.window.File(['third'], 'third.png', { type: 'image/png' })]
     Object.defineProperty(editUpload, 'files', { value: extraRefs, configurable: true })
     editUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 60))
+    assert.ok(await waitUntil(() => view.querySelectorAll('[data-edit-reference] img').length === 3), 'reference uploads finish')
     assert.deepEqual([...view.querySelectorAll('[data-edit-reference] img')].map(image => image.alt), ['retained-reference.png', 'second.png', 'third.png'], 'multiple selections append in input order')
     view.querySelector('[data-edit-reference] button').click()
     await waitForSelector(jsdomDocument, '[data-edit-reference-preview]')
@@ -4957,7 +5071,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(view, '[data-node-id="node-image"]')
     assert.ok(view.querySelector('[data-node-id="node-image"]') !== null, 'image node rendered from the fixture')
 
-    const waitUntil = async (predicate, timeout = 2500) => {
+    async function waitUntil(predicate, timeout = 2500) {
       const deadline = Date.now() + timeout
       while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25))
       return predicate()
@@ -5461,6 +5575,34 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       assert.ok(await waitUntil(() => view.querySelectorAll('[data-comparison-task] img').length === 2, 5000))
       assert.equal(view.querySelectorAll('[data-comparison-task] [data-generation-animation]').length, 0, 'all animations unmount when all models finish')
     }
+
+    // Earlier native-new-session coverage closed the studio; reopen it first.
+    jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]').click()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    // Import directly from a completed generation, then upload/reorder slides.
+    view.querySelector('[data-comparison-task] [data-image-to-ppt]').click()
+    await waitForSelector(view, '[data-ppt-input]')
+    const pptView = view.querySelector('[data-ppt-workspace]')
+    assert.equal(pptView.hidden, false)
+    assert.equal(pptUploaded[0].name, 'dsh-image-1.png')
+    const pptUpload = pptView.querySelector('input[type="file"]')
+    Object.defineProperty(pptUpload, 'files', { value: [new dom.window.File(['slide'], 'second.png', { type: 'image/png' })], configurable: true })
+    pptUpload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    assert.ok(await waitUntil(() => pptView.querySelectorAll('[data-ppt-input]').length === 2))
+    pptView.querySelectorAll('[data-ppt-input]')[1].querySelector('button[aria-label="向前移动一页"]').click()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.ok(pptView.querySelector('[data-ppt-input]').textContent.includes('second.png'))
+    const convert = pptView.querySelector('[data-ppt-convert]')
+    assert.ok(await waitUntil(() => !convert.disabled))
+    convert.click()
+    assert.ok(await waitUntil(() => pptSubmissions.length === 1))
+    assert.equal(pptSubmissions[0].images[0].name, 'second.png')
+    assert.equal(pptSubmissions[0].offlineOcr, true)
+    assert.ok(await waitUntil(() => pptView.querySelector('a[download="final.pptx"]')))
+    normalSwitch.click()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(pptView.hidden, true)
+    assert.ok(view.querySelector('button[class*="generateButton"]'), 'normal generation remains available')
 
   } catch (error) {
     console.error('Client regression:', error)
