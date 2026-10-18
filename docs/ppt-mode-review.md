@@ -1,10 +1,10 @@
-# 图片转可编辑 PPT · 1.9.0 审核
+# 图片转可编辑 PPT · 1.9.0
 
 新增模式直接接入官方 [image-to-editable-ppt](https://github.com/ningzimu/image-to-editable-ppt-skill)，不内置另一套重建算法。检查上游版本：b7be494e31a0ed56ef98716891db5474606b8cdf；安装按钮从官方仓库获取 skill，完整保留 references、prompts、scripts 和 cli。
 
 ## 使用
 
-1. 安装本次 tgz 后完全重启 DSH。
+1. 安装1.9.0后完全重启 DSH。
 2. 设置 → 生图配置 → 图片转可编辑 PPT：安装官方 skill，再安装运行环境（需要 Python 3.10+，首次联网下载安装依赖）。已有 skill 可更新，再修复运行环境。
 3. 配置 PaddleOCR token（可选）和兼容图像 API（已有有效 Codex OAuth 时可省略），点「保存并应用」。配置写入 skill 自己的 `~/.editppt/config.yaml`；secret 不回显，不写入任务清单或提示词。
 4. DSH 设置默认模型；技能开关和长任务开关需开启。Agent 预设应包含文件/命令工具，多页转换还需要子 Agent。模型配置与生图模型配置是两回事：前者驱动重建 Agent，图像 API 用于修复背景/分离素材。
@@ -26,4 +26,4 @@
 
 未验证：真实用户 Electron 宿主的 Agent 权限、真实图像 API/PaddleOCR 服务质量、复杂页面最终可编辑程度。Windows 路径和Python启动器有专门分支，但未在Windows机器实测。
 
-审核包未发布 npm，等待用户审核。
+本功能随1.9.0发布。
