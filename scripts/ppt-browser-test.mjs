@@ -1,0 +1,67 @@
+/** Build: pnpm exec tsdown --config scripts/ppt-preview.config.ts */
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { readFileSync, mkdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
+const runtime = createRequire(`${process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES}/.ppt-test.cjs`)
+const { chromium } = runtime('playwright')
+const fieldValues = new Map()
+const fields = [
+  { id: 'image-api-key', label: '图像 API 密钥（可选）', type: 'secret', description: '已有 Codex OAuth 时可不填；需要 API 兜底时填写。' },
+  { id: 'image-base-url', label: 'API 地址', type: 'string', default: 'https://api.openai.com/v1' },
+  { id: 'image-model', label: '图像模型', type: 'string', default: 'gpt-image-2' },
+  { id: 'paddle-ocr-token', label: 'PaddleOCR token（可选）', type: 'secret', description: '用于识别文字内容、文字框和字号。' },
+]
+const library = () => ({ entries: [{ name: 'image-to-editable-ppt', config: { fields, values: fields.map(field => ({ id: field.id, set: fieldValues.has(field.id), ...field.type !== 'secret' && fieldValues.has(field.id) ? { value: fieldValues.get(field.id) } : {} })), source: 'plugin', applicable: true, missing: [], note: '密钥只写入本机 ~/.editppt/config.yaml，不进入任务提示词。' } }] })
+const slide = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#f7f9fd"/><rect x="70" y="72" width="10" height="78" rx="5" fill="#5669d8"/><text x="110" y="128" font-family="sans-serif" font-size="52" fill="#27304b">AI PLATFORM ROADMAP</text><text x="110" y="186" font-family="sans-serif" font-size="24" fill="#79839a">FROM KNOWLEDGE TO ACTION · 2026</text>${[0,1,2].map((i)=>`<rect x="${110+i*470}" y="280" width="420" height="380" rx="24" fill="white" stroke="#dfe4ef"/><rect x="${140+i*470}" y="320" width="70" height="70" rx="16" fill="#e9edff"/><text x="${160+i*470}" y="368" font-family="sans-serif" font-size="32" fill="#5669d8">0${i+1}</text><text x="${140+i*470}" y="457" font-family="sans-serif" font-size="32" fill="#27304b">${['KNOWLEDGE','WORKFLOW','INTELLIGENCE'][i]}</text><rect x="${140+i*470}" y="500" width="300" height="12" rx="6" fill="#e4e8f2"/><rect x="${140+i*470}" y="536" width="230" height="12" rx="6" fill="#edf0f7"/>`).join('')}<text x="110" y="810" font-family="sans-serif" font-size="20" fill="#8991a5">SAMPLE SLIDE · UI FIXTURE ONLY</text></svg>`
+const tokens = `${process.env.GENERATION_FONT ? '@font-face{font-family:PreviewCJK;src:url(/font)}' : ''}:root{--dsw-alias-bg-layer-1:#fff;--dsw-alias-bg-layer-2:#f5f6fa;--dsw-alias-border-l2:#e6e8ef;--dsw-alias-label-primary:#252938;--dsw-alias-label-secondary:#6e7689;--dsw-alias-brand-primary:#5368d9}*{box-sizing:border-box}html,body,#root{margin:0;height:100%;font-family:PreviewCJK,system-ui,sans-serif}.fixture{height:100%;display:flex;flex-direction:column;padding:20px;gap:18px;background:#f5f6fa;color:#252938}.fixture>header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px}.fixture>header span{color:#8790a4}.fixture>header button{border:1px solid #e3e6ed;background:#fff;border-radius:8px;padding:6px;font:inherit}.fixture>main{flex:1;min-height:0}.fixture>main.settings{overflow:auto;padding:24px;border-radius:16px;background:white}.settings h2{font-size:18px}`
+const server = createServer(async (req, res) => {
+  if (req.url === '/font' && process.env.GENERATION_FONT) { res.end(readFileSync(process.env.GENERATION_FONT)); return }
+  if (req.url === '/preview.js') { res.setHeader('content-type','text/javascript');res.end(readFileSync(new URL('../.ppt-preview/preview.js',import.meta.url)));return }
+  if (req.url?.startsWith('/slide.png')) { res.setHeader('content-type','image/svg+xml'); res.end(slide); return }
+  if (req.url?.startsWith('/api/')) {
+    let body=''; for await(const chunk of req)body+=chunk
+    const input = body ? JSON.parse(body) : {}
+    if(req.url.endsWith('/config/save')) for(const value of input.values ?? [])fieldValues.set(value.id,value.value)
+    const value=req.url.endsWith('/runtime') ? { runtime: { available:true, message:'editppt ready · Python 3.11 · dependencies installed' } } : req.url.endsWith('/config/apply') ? { library:library(), steps:[] } : { library:library() }
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,...value}));return
+  }
+  res.setHeader('content-type','text/html');res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${tokens}</style><div id="root"></div><script src="/preview.js"></script></html>`)
+})
+await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
+let browser
+try{
+ browser=await chromium.launch({executablePath:process.env.GENERATION_CHROMIUM_PATH,args:['--no-sandbox','--disable-dev-shm-usage'],headless:true})
+ const page=await browser.newPage({viewport:{width:1280,height:850}}),errors=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ await page.goto(`http://127.0.0.1:${server.address().port}`)
+ const file={name:'slide-1.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}
+ await page.evaluate(() => document.fonts.ready)
+ await page.locator('input[type=file]').setInputFiles([file,{...file,name:'slide-2.png'}])
+ await page.waitForFunction(()=>document.querySelectorAll('[data-ppt-input]').length===2)
+ await page.getByLabel('向前移动一页').nth(1).click()
+ assert.ok((await page.locator('[data-ppt-input]').first().textContent()).includes('slide-2.png'))
+ await page.getByRole('button',{name:'生成可编辑 PPT',exact:true}).click()
+ await page.waitForSelector('[data-task-status=running]')
+ await page.getByRole('button',{name:'取消转换',exact:true}).click()
+ await page.waitForSelector('[data-task-status=cancelled]')
+ await page.getByRole('button',{name:'示例完成',exact:true}).click()
+ await page.waitForSelector('[data-task-status=completed] a[download="editable-deck.pptx"]')
+ mkdirSync(new URL('../docs/images/',import.meta.url),{recursive:true})
+ await page.locator('.fixture>main').screenshot({path:new URL('../docs/images/ppt-mode.png',import.meta.url).pathname})
+ for(const viewport of [{width:390,height:780},{width:800,height:360},{width:1280,height:850}]){
+  await page.setViewportSize(viewport)
+  assert.ok(await page.locator('[data-ppt-workspace]').isVisible())
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`No horizontal overflow: ${viewport.width}`)
+ }
+ await page.getByRole('button',{name:'切换配置页',exact:true}).click()
+ await page.locator('[data-ppt-setup] input[type=password]').first().waitFor()
+ await page.locator('[data-ppt-setup] input[type=password]').nth(1).fill('fixture-token-not-a-real-secret')
+ await page.getByRole('button',{name:'保存并应用 PPT 配置',exact:true}).click()
+ await page.getByText('PPT 配置已保存并应用。',{exact:true}).waitFor()
+ assert.equal(fieldValues.get('paddle-ocr-token'),'fixture-token-not-a-real-secret')
+ assert.equal(await page.locator('[data-ppt-setup] input[type=password]').nth(1).inputValue(),'')
+ await page.locator('.settings').screenshot({path:new URL('../docs/images/ppt-settings.png',import.meta.url).pathname})
+ assert.deepEqual(errors,[])
+ console.log('PPT browser checks passed: upload, order, conversion, cancel, result links, configuration, three viewports.')
+}finally{await browser?.close();await new Promise(resolve=>server.close(resolve))}

@@ -25,6 +25,7 @@ import { clipboardImageFiles, EDIT_REFERENCE_LIMIT, editReferenceLimit, useEditR
 import { mergeTemplatePrompt } from './template-library-state.ts'
 import { GooeyNav } from './GooeyNav.tsx'
 import { InspirationGallery } from './InspirationGallery.tsx'
+import { PptWorkspace, type PptImport } from './PptWorkspace.tsx'
 import { CanvasWorkspace } from './CanvasWorkspace.tsx'
 import { ModelPicker, resolveModelChoice, type ModelPickerValue } from './ModelPicker.tsx'
 import { useImageGenLanguageTick } from './use-language.ts'
@@ -449,7 +450,7 @@ type PanelTab = GenerateMode | 'gallery'
 
 /** Top-level workspaces inside the panel. 'normal' is the classic studio;
  *  more task-oriented modes (prototype, …) can join alongside 'ecommerce'. */
-type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas'
+type PanelWorkspace = 'normal' | 'ecommerce' | 'canvas' | 'ppt'
 
 type GalleryFilter = string
 type ComparisonSession = { taskIds: string[]; prompt: string; comparisonId: string }
@@ -627,6 +628,13 @@ export function ImageGenPanel(props: {
 
   const [tab, setTab] = useState<PanelTab>('text')
   const [workspace, setWorkspace] = useState<PanelWorkspace>('normal')
+  const [pptImport, setPptImport] = useState<PptImport>()
+  const pptImportId = useRef(0)
+  const openPpt = (image: GeneratedImage, index = 0): void => {
+    setPptImport({ id: ++pptImportId.current, file: generatedImageToFile(image, index) })
+    setWorkspace('ppt')
+    setPreview(null)
+  }
   const [canvasImportRequest, setCanvasImportRequest] = useState<{ source: 'history' | 'gallery'; entryId: string; imageIndex: number } | undefined>()
   /** Switch to a normal-generation tab, leaving any task workspace. */
   const openTab = (next: PanelTab): void => {
@@ -2145,18 +2153,21 @@ export function ImageGenPanel(props: {
         </span>
         <GooeyNav
           ariaLabel={tt('workspace.label')}
-          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : 3}
+          activeIndex={workspace === 'normal' ? (tab === 'gallery' ? 1 : 0) : workspace === 'canvas' ? 2 : workspace === 'ecommerce' ? 3 : 4}
           onSelect={index => {
             if (index === 0) openTab('text')
             else if (index === 1) openTab('gallery')
             else if (index === 2) setWorkspace('canvas')
-            else setWorkspace('ecommerce')
+            else if (index === 3) setWorkspace('ecommerce')
+            else setWorkspace('ppt')
           }}
           items={[
             { key: 'normal', label: tt('workspace.normal') },
             { key: 'gallery', label: tt('gallery.title') },
             { key: 'canvas', label: tt('workspace.canvas') },
+
             { key: 'ecommerce', label: <>{tt('workspace.ecommerce')}<span className={css.previewBadge}>{tt('ecommerce.badge')}</span></> },
+            { key: 'ppt', label: tt('ppt.nav') },
           ]}
         />
         <span className={css.panelHeaderActions}>
@@ -2190,7 +2201,7 @@ export function ImageGenPanel(props: {
           const files = clipboardImageFiles(event.clipboardData)
           if (files.length > 0) { event.preventDefault(); event.stopPropagation(); editReferences.add(files) }
         }}>
-          {workspace !== 'canvas' ? <TemplateLibraryButton expanded={libraryOpen} onClick={() => setLibraryOpen(true)} /> : null}
+          {workspace !== 'canvas' && workspace !== 'ppt' ? <TemplateLibraryButton expanded={libraryOpen} onClick={() => setLibraryOpen(true)} /> : null}
           {/* ------------------------------------------------ config sidebar */}
           <aside
             ref={configAsideRef}
@@ -2681,6 +2692,8 @@ export function ImageGenPanel(props: {
             </section>
           </aside>
 
+          <PptWorkspace api={api} active={active && workspace === 'ppt'} importRequest={pptImport} onImported={() => setPptImport(undefined)} />
+
           {workspace === 'canvas' ? (
             <CanvasWorkspace
               api={api}
@@ -2970,6 +2983,7 @@ export function ImageGenPanel(props: {
                           />
                         </div>
                       ) : <span>{tt(`tasks.${task.status}` as never)}</span>}
+                      {image ? <button type="button" className={css.comparisonPpt} data-image-to-ppt="" onClick={() => openPpt(image)}>{tt('ppt.action')}</button> : null}
                     </article>
                   )
                 })}
@@ -3067,6 +3081,7 @@ export function ImageGenPanel(props: {
                         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
                         {addingToConversation === index ? tt('conversation.adding') : tt('conversation.add')}
                       </button>
+                      <button type="button" className={css.pptAction} data-image-to-ppt="" onClick={event => { event.stopPropagation(); openPpt(image, index) }}>{tt('ppt.action')}</button>
                       <a
                       className={css.download}
                       href={srcOf(image)}
@@ -3210,6 +3225,7 @@ export function ImageGenPanel(props: {
                   <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage) }}>
                     {tt('gallery.add')}
                   </button>
+                  <button type="button" className={css.lightboxEdit} data-image-to-ppt="" onClick={() => openPpt(previewImage, preview.index)}>{tt('ppt.action')}</button>
                   <button type="button" className={css.lightboxEdit} onClick={addPreviewToEdit}>
                     {tt('preview.addToEdit')}
                   </button>

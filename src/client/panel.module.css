@@ -393,6 +393,7 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   flex: none;
 }
@@ -672,13 +673,16 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
 /* The canvas workspace owns the full generation surface. Keep the classic
    config/result DOM mounted so switching tabs remains instantaneous, but hide
    those siblings while the scene graph is active. */
-.generation[data-workspace='canvas'] {
+.generation[data-workspace='canvas'],
+.generation[data-workspace='ppt'] {
   display: flex;
   height: 100%;
 }
 
 .generation[data-workspace='canvas'] > .config,
-.generation[data-workspace='canvas'] > .canvas {
+.generation[data-workspace='canvas'] > .canvas,
+.generation[data-workspace='ppt'] > .config,
+.generation[data-workspace='ppt'] > .canvas {
   display: none !important;
 }
 
@@ -3185,3 +3189,8 @@ html[data-dsh-imagegen-chat-collapsed] [data-dsh-imagegen-chat-resizer] {
   .galleryToolbarActions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
   .galleryMasonry { grid-template-columns: 1fr; }
 }
+
+.pptAction { position: absolute; top: 68px; left: 8px; padding: 3px 10px; border: 1px solid rgb(255 255 255 / 62%); border-radius: 999px; color: #fff; background: rgb(15 18 24 / 82%); font: inherit; font-size: 12px; cursor: pointer; opacity: 0; }
+.imageCard:hover .pptAction, .pptAction:focus-visible { opacity: 1; }
+.comparisonPpt { margin: 8px; padding: 6px 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-layer-2); color: inherit; cursor: pointer; font-size: 12px; }
+@media (hover: none) { .pptAction { opacity: 1; } }

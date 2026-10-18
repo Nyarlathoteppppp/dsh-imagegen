@@ -33,8 +33,10 @@ import type {
   CanvasSkillOutput,
   CanvasSkillRunRequest,
   CanvasSkillTask,
+  PptRunRequest,
 } from './protocol.ts'
 import { extractFileText, MAX_EXTRACTED_CHARS } from './file-text.ts'
+import { readZipDirectory, readZipEntry } from './zip.ts'
 import {
   BUILTIN_DESCRIBE,
   BUILTIN_EXTRACT,
@@ -151,6 +153,7 @@ export interface SkillRunnerOptions {
   dataRoot: () => string
   /** Upstream home of the deck pipeline, surfaced as a one-click install. */
   pptInstallUrl?: string
+  pptCommand?: () => Promise<string>
 }
 
 // ---------------------------------------------------------------- constants
@@ -460,6 +463,61 @@ export class SkillRunner {
     if (!skill.accepts.includes(target.node.type)) throw new Error(t('canvas.skills.incompatible'))
     if (skill.tier === 'heavy' && !catalog.agentAvailable) throw new Error(t('canvas.skills.needAgent'))
 
+    return this.startTask(request, skill, inputs)
+  }
+
+  /** Standalone mode uses the same installed skill, without creating a canvas. */
+  async runPpt(request: PptRunRequest): Promise<CanvasSkillTask> {
+    const t = this.translate(request.language)
+    const catalog = await this.list(request.language)
+    const skill = catalog.skills.find(item => item.id === BUILTIN_PPT)
+    if (skill === undefined || !catalog.agentAvailable) throw new Error(t('canvas.skills.needAgent'))
+    if (!catalog.installed.includes(EDITABLE_PPT_SKILL)) throw new Error(t('canvas.skills.skillMissing', { name: EDITABLE_PPT_SKILL }))
+    if (request.images.length === 0 || request.images.length > MAX_SKILL_INPUT_NODES) throw new Error(t('ppt.inputLimit'))
+    const inputs: RunInput[] = []
+    for (const [index, asset] of request.images.entries()) {
+      const found = await this.backend.canvas.readAsset(asset.assetId)
+      if (found === undefined || !/^image\/(png|jpeg|webp)$/.test(found.mime)) throw new Error(t('ppt.invalidImage'))
+      const safeAsset: CanvasAssetRef = { ...asset, mime: found.mime, kind: 'image', name: `slide-${index + 1}.${found.mime === 'image/jpeg' ? 'jpg' : found.mime.split('/')[1]}` }
+      inputs.push({ asset: safeAsset, node: { id: newId('ppt-input'), type: 'image', title: safeAsset.name!, x: 0, y: 0, width: 320, height: 240, metadata: { asset: safeAsset } } })
+    }
+    return this.startTask({ canvasId: 'ppt', skillId: BUILTIN_PPT, nodeIds: inputs.map(input => input.node.id), language: request.language,
+      instruction: request.offlineOcr ? 'The user explicitly chose offline text detection for this run. Use upstream editppt prepare --no-text-hints, then editppt page hints for each page to generate offline hints before reconstruction. Do not call PaddleOCR for this run or ask about a token again. All other upstream steps remain required.' : 'Use the configured PaddleOCR token. Follow the upstream skill if OCR fails; do not silently downgrade quality.' }, skill, inputs, true)
+  }
+
+  /** Durable conversion history survives panel reloads and host restarts. */
+  async pptTasks(): Promise<CanvasSkillTask[]> {
+    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
+    const files = await fs.readdir(dir).catch(() => [])
+    const persisted: CanvasSkillTask[] = []
+    for (const name of files.filter(name => /^skillrun-[\w-]+\.json$/.test(name))) {
+      const task = await fs.readFile(path.join(dir, name), 'utf8').then(raw => JSON.parse(raw) as CanvasSkillTask).catch(() => undefined)
+      if (task === undefined || task.canvasId !== 'ppt' || task.id !== name.slice(0, -5)) continue
+      const live = this.tasks.get(task.id)
+      if (live !== undefined) { persisted.push(live); continue }
+      if (task.status === 'queued' || task.status === 'running') {
+        task.status = 'failed'
+        task.error = this.translate(task.language)('ppt.interrupted')
+        task.finishedAt = Date.now()
+        await this.persistPpt(task)
+      }
+      persisted.push(task)
+    }
+    for (const task of this.tasks.values()) if (task.canvasId === 'ppt' && !persisted.some(item => item.id === task.id)) persisted.push(task)
+    return persisted.sort((a, b) => b.startedAt - a.startedAt)
+  }
+
+  private async persistPpt(task: CanvasSkillTask): Promise<void> {
+    if (task.canvasId !== 'ppt') return
+    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
+    await fs.mkdir(dir, { recursive: true })
+    const file = path.join(dir, `${task.id}.json`)
+    const temporary = `${file}.${randomUUID()}.tmp`
+    await fs.writeFile(temporary, JSON.stringify(task), 'utf8')
+    await fs.rename(temporary, file)
+  }
+
+  private async startTask(request: CanvasSkillRunRequest, skill: CanvasSkillDescriptor, inputs: RunInput[], ppt = false): Promise<CanvasSkillTask> {
     const language = request.language
     const task: CanvasSkillTask = {
       id: newId('skillrun'),
@@ -472,9 +530,11 @@ export class SkillRunner {
       phase: 'queued',
       nodeIds: [...request.nodeIds],
       startedAt: Date.now(),
+      ...ppt ? { pptImages: inputs.map(input => input.asset!) } : {},
       ...language === undefined || language === '' ? {} : { language },
     }
     this.tasks.set(task.id, task)
+    try { await this.persistPpt(task) } catch (error) { this.tasks.delete(task.id); throw error }
     this.pruneTasks()
     const job = this.enqueue(task, skill, inputs, request)
     // The caller polls the task; the job never rejects outward.
@@ -509,6 +569,7 @@ export class SkillRunner {
     const canceller = this.cancellers.get(id)
     this.cancellers.delete(id)
     if (canceller !== undefined) await canceller.dispose().catch(() => { /* best effort */ })
+    await this.persistPpt(task)
     return true
   }
 
@@ -536,6 +597,7 @@ export class SkillRunner {
       } finally {
         task.finishedAt = Date.now()
         this.cancellers.delete(task.id)
+        await this.persistPpt(task)
       }
     }
     const next = this.tail.then(run, run)
@@ -812,7 +874,17 @@ export class SkillRunner {
     // Exposable declared values (secrets filtered host-side) tell the agent what
     // is already configured, so it does not hunt for settings it already has.
     const configNote = await this.backend.skillConfig?.note(skillName).catch(() => undefined)
-    const systemPrompt = this.heavySystemPrompt(skill, body, fileLines, outputDir, t, configNote)
+    const definition = await this.backend.registry?.list().then(items => items.find(item => item.name === skillName)).catch(() => undefined)
+    const command = task.canvasId === 'ppt' ? await this.options.pptCommand?.() : undefined
+    const systemPrompt = [this.heavySystemPrompt(skill, body, fileLines, outputDir, t, configNote),
+      ...definition?.path === undefined ? [] : [`Skill entry path: ${JSON.stringify(definition.path)}. Resolve every skill-local reference, prompt builder and CLI source relative to its directory.`],
+      ...task.canvasId !== 'ppt' ? [] : [
+        'This is an image-to-editable-PPT conversion explicitly requested by the user. Follow the installed upstream skill unchanged; do not design a replacement pipeline.',
+        'The input order is the slide order. Use the original images as source slides. Copy ONLY the validated final deck, final previews and validation report to the output directory. Do not copy intermediate page decks as final decks. If finalize cannot pass, report failure; never substitute a full-slide raster.',
+        `Runtime CLI: ${JSON.stringify(command ?? 'editppt')}. Use this executable for editppt commands; add its parent directory to your shell PATH for upstream helpers.`,
+        request.instruction ?? '',
+      ],
+    ].join('\n\n')
     task.stage = t('canvas.skills.stageRunning')
     task.phase = 'running'
     const controller = new AbortController()
@@ -820,7 +892,9 @@ export class SkillRunner {
     const timer = timeout > 0 ? setTimeout(() => controller.abort(), timeout) : undefined
     timer?.unref?.()
     let handle: SkillAgentHandle | undefined
+    const cancelled = (): boolean => task.status === 'cancelled'
     try {
+      if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       handle = await agents.create({
         sessionId: newId('skillagent'),
         cwd: runDir,
@@ -829,6 +903,7 @@ export class SkillRunner {
         fail: key => t(key),
       })
       if (handle === undefined) throw new Error(t('canvas.skills.agentFailed'))
+      if (cancelled()) { handle.cancel(); throw new Error(t('canvas.skills.stageCancelled')) }
       this.cancellers.set(task.id, {
         dispose: async () => {
           controller.abort()
@@ -845,6 +920,8 @@ export class SkillRunner {
       } finally {
         watch.stop()
       }
+      controller.signal.throwIfAborted()
+      if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       task.stage = t('canvas.skills.stageCollecting')
       task.phase = 'collecting'
       const answer = lastAssistantText(handle.session.deriveMessages())
@@ -955,6 +1032,13 @@ export class SkillRunner {
       const data = await fs.readFile(found.file).catch(() => undefined)
       if (data === undefined) continue
       const name = path.basename(found.file)
+      if (task.canvasId === 'ppt' && name.toLowerCase().endsWith('.pptx')) {
+        const entries = readZipDirectory(data)
+        const presentation = entries.find(entry => entry.name === 'ppt/presentation.xml')
+        const slides = entries.filter(entry => /^ppt\/slides\/slide\d+\.xml$/.test(entry.name))
+        if (presentation === undefined || readZipEntry(data, presentation) === undefined || slides.length !== task.pptImages?.length
+          || slides.some(entry => readZipEntry(data, entry) === undefined)) throw new Error(t('ppt.invalidDeck'))
+      }
       const asset = await canvas.putFile({
         data,
         mime: mimeFromName(name),
@@ -965,6 +1049,9 @@ export class SkillRunner {
       const node = fileOutputNode(target.node, asset, name, skill.id, skill.name, [target.node.id])
       nodes.push(node)
       connections.push({ id: newId('edge'), fromNodeId: target.node.id, toNodeId: node.id })
+    }
+    if (task.canvasId === 'ppt' && !nodes.some(node => node.metadata?.asset?.name?.toLowerCase().endsWith('.pptx'))) {
+      throw new Error([t('ppt.noDeck'), answer?.trim()].filter(Boolean).join('\n'))
     }
     if (nodes.length === 0) {
       // The skill finished without a file: keep the agent's answer so the run
