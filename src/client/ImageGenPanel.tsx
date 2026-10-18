@@ -2950,7 +2950,7 @@ export function ImageGenPanel(props: {
                   const taskImages = task.result?.images ?? []
                   const image = taskImages[0]
                   return (
-                    <article key={task.id}>
+                    <article key={task.id} data-comparison-task={task.id} data-task-status={task.status}>
                       <strong>{task.request.model}</strong>
                       {image !== undefined ? (
                         <button
@@ -2961,6 +2961,14 @@ export function ImageGenPanel(props: {
                         >
                           <img src={srcOf(image)} alt={task.request.model} />
                         </button>
+                      ) : task.status === 'queued' || task.status === 'running' ? (
+                        <div className={css.comparisonPending} role="status">
+                          <GenerationLoading
+                            compact
+                            title={tt(task.status === 'queued' ? 'canvas.queued' : 'canvas.generating')}
+                            hint={tt('canvas.elapsed', { seconds: Math.max(0, Math.floor((Date.now() - (task.startedAt ?? task.createdAt)) / 1000)) })}
+                          />
+                        </div>
                       ) : <span>{tt(`tasks.${task.status}` as never)}</span>}
                     </article>
                   )

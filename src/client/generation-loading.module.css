@@ -60,6 +60,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.field[data-compact] { width: 100%; max-height: none; }
+.field[data-compact] .badge { right: 4px; bottom: 4px; padding: 8px 12px; border-radius: 16px; }
+.field[data-compact] .title { font-size: 12px; }
+.field[data-compact] .hint { font-size: 11px; }
+
 @media (prefers-reduced-motion: reduce) {
   .dot { animation: none; opacity: 0.65; }
 }

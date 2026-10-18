@@ -70,6 +70,38 @@ try {
       await field.screenshot({ path: `${process.env.GENERATION_FRAME_DIR}/${String(frame).padStart(3, '0')}.png` })
     }
   }
+  for (const mode of ['文生图', '图生图']) {
+    await page.getByLabel('模式', { exact: true }).selectOption(mode)
+    for (const count of [2, 4]) {
+      await page.getByLabel('对比模型数', { exact: true }).selectOption(String(count))
+      for (const viewport of [{ width: 1000, height: 820 }, { width: 390, height: 780 }, { width: 800, height: 360 }]) {
+        await page.setViewportSize(viewport)
+        for (const state of ['queued', 'running']) {
+          await page.getByLabel('状态', { exact: true }).selectOption(state)
+          assert.equal(await field.count(), count, 'every pending model gets its own animation')
+          assert.equal(await field.evaluateAll(fields => fields.every(el => {
+            const svg = el.querySelector('svg').getBoundingClientRect(), card = el.closest('article').getBoundingClientRect()
+            return svg.width > 100 && svg.height > 100 && svg.x >= card.x && svg.right <= card.right && svg.bottom <= card.bottom
+          })), true, `${mode}, ${count} models, ${viewport.width}: nonzero dot area fits every card`)
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+        }
+        for (const state of ['completed', 'failed', 'cancelled']) {
+          await page.getByLabel('状态', { exact: true }).selectOption(state)
+          assert.equal(await field.count(), 0, 'terminal comparison models stop animating')
+        }
+      }
+    }
+  }
+  await page.setViewportSize({ width: 1000, height: 820 })
+  await page.setViewportSize({ width: 1280, height: 820 })
+  await page.getByLabel('状态', { exact: true }).selectOption('mixed')
+  assert.equal(await field.count(), 2, 'mixed results keep only queued and running models animated')
+  assert.equal(await page.locator('[data-task-status="completed"] img').count(), 1)
+  await page.locator('main').screenshot({ path: new URL('comparison-generation-dots.png', folder).pathname })
+  await page.getByLabel('深色', { exact: true }).check()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  assert.equal(await field.locator('circle').first().evaluate(el => getComputedStyle(el).animationName), 'none')
+  await page.locator('main').screenshot({ path: new URL('comparison-generation-dots-dark.png', folder).pathname })
   assert.deepEqual(errors, [])
-  console.log('PASS generation animation: live motion, text/edit states, completion/failure/cancel, desktop/mobile/short viewport, dark theme and reduced motion')
+  console.log('PASS generation animation: single and 2/4-model text/edit comparison, mixed results, live motion, terminal states, desktop/mobile/short viewport, dark and reduced motion')
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

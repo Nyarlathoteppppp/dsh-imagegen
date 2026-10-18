@@ -3963,6 +3963,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   let rejectNextSettingsMutation = false
   const ecommerceSubmissions = []
   let completeGenerationTasks = false
+  const comparisonTaskStates = new Map()
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
@@ -4226,6 +4227,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       // submits pushed, so a lazy template literal would hand every response
       // the same id.
       const task = { id: `ecommerce-task-${ecommerceSubmissions.length}`, request: payload, status: 'queued', createdAt: 1 }
+      if (payload.comparisonId) comparisonTaskStates.set(task.id, 'queued')
       return { ok: true, json: async () => ({ ok: true, task }) }
     }
     if (path.endsWith('/tasks/get')) {
@@ -4236,6 +4238,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       if (payload === undefined) {
         return { ok: true, json: async () => ({ ok: false, code: 'not-found', message: 'task not found' }) }
       }
+      const status = comparisonTaskStates.get(requestedId) ?? (completeGenerationTasks || index === 0 ? 'completed' : 'queued')
       return {
         ok: true,
         json: async () => ({
@@ -4243,9 +4246,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           task: {
             id: requestedId,
             request: payload,
-            status: completeGenerationTasks || index === 0 ? 'completed' : 'queued',
+            status,
             createdAt: 1,
-            ...completeGenerationTasks || index === 0 ? { result: { images: [{ b64: 'cG5nLWRhdGE=', mime: 'image/png' }] } } : {},
+            ...status === 'completed' ? { result: { images: [{ b64: 'cG5nLWRhdGE=', mime: 'image/png' }] } } : {},
           },
         }),
       }
@@ -4257,14 +4260,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           ok: true,
           tasks: ecommerceSubmissions.map((payload, index) => {
             const request = { ...payload }
+            const status = comparisonTaskStates.get(`ecommerce-task-${index + 1}`) ?? (completeGenerationTasks || index === 0 ? 'completed' : 'queued')
             delete request.image
             delete request.images
             return {
               id: `ecommerce-task-${index + 1}`,
               request,
-              status: completeGenerationTasks || index === 0 ? 'completed' : 'queued',
+              status,
               createdAt: 1,
-              resultAvailable: completeGenerationTasks || index === 0,
+              resultAvailable: status === 'completed',
             }
           }),
         }),
@@ -5410,6 +5414,53 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     completeGenerationTasks = true
     assert.ok(await waitUntil(() => view.querySelector('[data-generation-animation]') === null, 5000), 'the animation unmounts when host tasks complete')
     await waitForSelector(view, '[data-result-preview-grid] img')
+
+    // Exercise real comparison submissions in BOTH modes, not only the shared
+    // decorative component. Each pending slot must retain its own animation.
+    for (const mode of ['文生图', '图生图']) {
+      jsdomDocument.querySelector('[data-history-new]').click()
+      await new Promise(resolve => setTimeout(resolve, 40))
+      ;[...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === mode).click()
+      await new Promise(resolve => setTimeout(resolve, 40))
+      if (mode === '图生图') {
+        const upload = view.querySelector('[data-edit-references] input[type="file"]')
+        Object.defineProperty(upload, 'files', { value: [new dom.window.File(['ref'], 'compare.png', { type: 'image/png' })], configurable: true })
+        upload.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+        await waitForSelector(view, '[data-edit-reference]')
+      }
+      const toggle = view.querySelector('[class*="compareToggle"] input')
+      if (!toggle.checked) toggle.click()
+      await new Promise(resolve => setTimeout(resolve, 30))
+      const models = [...view.querySelectorAll('[class*="compareModelChoices"] input')]
+      assert.ok(models.length >= 2, 'comparison fixture offers two models')
+      for (let index = 0; index < models.length; index++) if (models[index].checked !== (index < 2)) models[index].click()
+      const promptField = view.querySelector('textarea')
+      nativeTextAreaSetter.call(promptField, 'Comparison animation regression')
+      promptField.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+      await new Promise(resolve => setTimeout(resolve, 30))
+      const before = ecommerceSubmissions.length
+      view.querySelector('button[class*="generateButton"]').click()
+      assert.ok(await waitUntil(() => view.querySelectorAll('[data-comparison-task] [data-generation-animation]').length === 2), `${mode}: both queued models animate`)
+      assert.equal(ecommerceSubmissions.length, before + 2)
+      assert.ok(ecommerceSubmissions.slice(before).every(request => request.mode === (mode === '图生图' ? 'edit' : 'text')))
+      const ids = [...view.querySelectorAll('[data-comparison-task]')].map(el => el.getAttribute('data-comparison-task'))
+      const slot = index => view.querySelector(`[data-comparison-task="${ids[index]}"]`)
+      comparisonTaskStates.set(ids[0], 'completed')
+      comparisonTaskStates.set(ids[1], 'running')
+      assert.ok(await waitUntil(() => slot(0)?.querySelector('img') && slot(1)?.getAttribute('data-task-status') === 'running', 5000), 'a completed result is visible beside the still-running model')
+      assert.equal(view.querySelectorAll('[data-comparison-task] [data-generation-animation]').length, 1)
+      assert.ok(!slot(1).textContent.includes('%'), 'comparison has no fake percentage')
+      comparisonTaskStates.set(ids[1], 'failed')
+      assert.ok(await waitUntil(() => slot(1)?.getAttribute('data-task-status') === 'failed', 5000))
+      assert.equal(slot(1).querySelector('[data-generation-animation]'), null, 'failure stops only that slot animation')
+      assert.ok(slot(0).querySelector('img'), 'another model failure does not hide completed images')
+      comparisonTaskStates.set(ids[1], 'cancelled')
+      assert.ok(await waitUntil(() => slot(1)?.textContent.includes('已取消'), 5000))
+      assert.equal(slot(1).querySelector('[data-generation-animation]'), null)
+      comparisonTaskStates.set(ids[1], 'completed')
+      assert.ok(await waitUntil(() => view.querySelectorAll('[data-comparison-task] img').length === 2, 5000))
+      assert.equal(view.querySelectorAll('[data-comparison-task] [data-generation-animation]').length, 0, 'all animations unmount when all models finish')
+    }
 
   } catch (error) {
     console.error('Client regression:', error)
