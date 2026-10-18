@@ -30,3 +30,7 @@ Thumbs.db
 
 # Local result sizing fixture output
 .result-preview/
+
+# Local generation animation fixture output
+.generation-preview/
+.gallery-preview/

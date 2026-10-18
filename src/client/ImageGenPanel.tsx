@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { GenerationLoading } from './GenerationLoading'
 import { createPortal } from 'react-dom'
 import { Button, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
@@ -2731,7 +2732,7 @@ export function ImageGenPanel(props: {
                       <span aria-hidden="true">▤</span> {tt('gallery.grid')}
                     </button>
                   </div>
-                  <Select className={css.gallerySort} value={gallerySort} onChange={value => { setGallerySort(value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
+                  <Select variant="toolbar" className={css.gallerySort} value={gallerySort} onChange={value => { setGallerySort(value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
                     <option value="newest">{tt('gallery.newest')}</option>
                     <option value="oldest">{tt('gallery.oldest')}</option>
                   </Select>
@@ -2967,20 +2968,17 @@ export function ImageGenPanel(props: {
             </section>
           ) : null}
           {generating && comparison === null && isGeneration ? (
-            <div className={css.canvasState} data-generation-state={activeTask?.status ?? 'submitting'} role="status">
-              <span className={css.bigSpinner} />
-              <span className={css.canvasStateTitle}>
-                {submitting && activeTask === undefined
+            <div className={`${css.canvasState} ${css.generationState}`} data-generation-state={activeTask?.status ?? 'submitting'} role="status">
+              <GenerationLoading
+                title={submitting && activeTask === undefined
                   ? tt('canvas.submitting')
                   : activeTask?.status === 'queued'
                     ? tt('canvas.queued')
                     : tt('canvas.generating')}
-              </span>
-              <span className={css.canvasStateHint}>
-                {activeTask?.status === 'queued'
+                hint={activeTask?.status === 'queued'
                   ? tt('canvas.queueHint', { count: activeTasks.length })
                   : tt('canvas.elapsed', { seconds: elapsed })}
-              </span>
+              />
             </div>
           ) : null}
 

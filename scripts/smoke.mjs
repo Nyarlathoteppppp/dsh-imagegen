@@ -3894,6 +3894,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const mutateCalls = []
   let rejectNextSettingsMutation = false
   const ecommerceSubmissions = []
+  let completeGenerationTasks = false
   /** Canvas generation requests submitted from the workspace composer. */
   const canvasTasks = []
   /** Documents the workspace persisted through /canvas/save. */
@@ -4174,9 +4175,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
           task: {
             id: requestedId,
             request: payload,
-            status: index === 0 ? 'completed' : 'queued',
+            status: completeGenerationTasks || index === 0 ? 'completed' : 'queued',
             createdAt: 1,
-            ...index === 0 ? { result: { images: [{ b64: 'cG5nLWRhdGE=', mime: 'image/png' }] } } : {},
+            ...completeGenerationTasks || index === 0 ? { result: { images: [{ b64: 'cG5nLWRhdGE=', mime: 'image/png' }] } } : {},
           },
         }),
       }
@@ -4193,9 +4194,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
             return {
               id: `ecommerce-task-${index + 1}`,
               request,
-              status: index === 0 ? 'completed' : 'queued',
+              status: completeGenerationTasks || index === 0 ? 'completed' : 'queued',
               createdAt: 1,
-              resultAvailable: index === 0,
+              resultAvailable: completeGenerationTasks || index === 0,
             }
           }),
         }),
@@ -4607,6 +4608,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(view.querySelector('button[class*="generateButton"]'), null, 'gallery hides normal generation button')
     assert.equal(view.textContent?.includes('灵感案例'), false, 'gallery hides inspiration examples')
     assert.ok(view.querySelector('[data-gallery="true"]') !== null, 'gallery workspace is isolated')
+    assert.equal(view.querySelector('button[class*="gallerySort"]').getAttribute('data-variant'), 'toolbar', 'gallery sorting uses a compact toolbar select, not a full-width form field')
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]') !== null, 'history remains visible in gallery mode')
     assert.equal(view.querySelectorAll('[data-gallery="true"]').length, 2, 'gallery mode is active')
     assert.ok(view.querySelector('[data-gallery="true"] [data-gallery-add-conversation]') !== null, 'gallery entries expose add-to-conversation action')
@@ -5308,6 +5310,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(multiRequest.image, 'data:image/png;base64,b25l')
     assert.deepEqual(multiRequest.images, ['data:image/png;base64,dHdv', 'data:image/png;base64,dGhyZWU='])
     assert.equal(multiRequest.refName, 'one.png、two.png、three.png')
+    await waitForSelector(view, '[data-generation-state="queued"] [data-generation-animation]')
+    assert.equal(view.querySelector('[data-generation-animation] svg').getAttribute('aria-hidden'), 'true', 'decorative dots are hidden from assistive technology')
+    assert.ok(!view.querySelector('[data-generation-animation]').textContent.includes('%'), 'indeterminate generation never invents a percentage')
+    ;[...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '文生图').click()
+    await waitForSelector(view, '[data-generation-animation]')
+    assert.ok(await waitUntil(() => view.querySelector('[data-edit-references]') === null), 'text mode uses the same pending animation')
+    ;[...view.querySelectorAll('[role="tablist"] button')].find(button => button.textContent === '图生图').click()
+    await waitForSelector(view, '[data-edit-references]')
     await new Promise(resolve => setTimeout(resolve, 40))
     view.querySelector('[aria-label="删除图3：three.png"]').click()
     await new Promise(resolve => setTimeout(resolve, 25))
@@ -5320,6 +5330,9 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     jsdomDocument.querySelector('[data-history-new]').click()
     await new Promise(resolve => setTimeout(resolve, 40))
     assert.equal(view.querySelectorAll('[data-edit-reference]').length, 0, 'new creation clears all edit references')
+    completeGenerationTasks = true
+    assert.ok(await waitUntil(() => view.querySelector('[data-generation-animation]') === null, 5000), 'the animation unmounts when host tasks complete')
+    await waitForSelector(view, '[data-result-preview-grid] img')
 
   } catch (error) {
     console.error('Client regression:', error)
