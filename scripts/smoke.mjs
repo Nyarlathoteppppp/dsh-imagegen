@@ -2783,16 +2783,22 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
     async create(options) {
       recordedPrompt = options.systemPrompt
       return {
-        session: { deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'agent result' }] }] }, followup() {},
+        session: { get seq() { return mode === 'agent-error' ? 1 : 0 }, eventAt() { return { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'NO_ADAPTER', message: 'Provider unavailable sk-private123456789' } } } } }, deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'agent result' }] }] }, followup() {},
         async whenIdle() {
           if (mode === 'hold') await new Promise(resolve => { release = resolve })
-          if (mode === 'no-deck') return
+          if (mode === 'no-deck' || mode === 'agent-error') return
           const slides = mode === 'wrong-count' ? 1 : 2
           const deck = mode === 'bad-zip' ? Buffer.from('not-a-pptx') : buildZip([
             { name: 'ppt/presentation.xml', body: '<p:presentation/>' },
             ...Array.from({ length: slides }, (_, index) => ({ name: `ppt/slides/slide${index + 1}.xml`, body: '<p:sld><p:sp>Editable text</p:sp></p:sld>' })),
           ])
-          writeFileSync(join(options.cwd, 'output', 'final.pptx'), deck)
+          if (mode === 'upstream-final' || mode === 'unvalidated-final') {
+            const final = join(options.cwd, 'output', 'upstream-run', 'final')
+            mkdirSync(final, { recursive: true })
+            writeFileSync(join(final, 'deck_edited.pptx'), deck)
+            writeFileSync(join(final, 'validation.json'), JSON.stringify({ passed: mode === 'upstream-final' }))
+            writeFileSync(join(final, 'run_summary.json'), JSON.stringify({ status: 'complete', page_count: 2, output: join(final, 'deck_edited.pptx'), validation: join(final, 'validation.json') }))
+          } else writeFileSync(join(options.cwd, 'output', 'final.pptx'), deck)
         }, cancel() { stopped += 1; release?.() }, async dispose() {},
       }
     },
@@ -2818,6 +2824,8 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
     const restored = await restarted.pptTasks()
     assert.equal(restored[0].id, task.id)
     assert.equal(restored[0].status, 'completed')
+    assert.ok(restored[0].agentSessionId?.startsWith('skillagent-'))
+    assert.ok(restored[0].runDirectory?.includes(task.id))
     assert.equal(restored[0].output.nodes[0].metadata.asset.name, 'final.pptx')
     for (const bad of ['bad-zip', 'wrong-count', 'no-deck']) {
       mode = bad
@@ -2825,6 +2833,18 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
       assert.equal(failed.status, 'failed', bad)
       assert.ok(failed.error)
     }
+    mode = 'upstream-final'
+    const recovered = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(recovered.status, 'completed', JSON.stringify(recovered))
+    assert.ok(recovered.output.nodes.some(node => node.metadata.asset?.name === 'deck_edited.pptx'))
+    mode = 'unvalidated-final'
+    const unvalidated = await wait(await runner.runPpt({ images: assets, offlineOcr: true }))
+    assert.equal(unvalidated.status, 'failed', 'unvalidated upstream final must not become successful')
+    mode = 'agent-error'
+    const providerError = await wait(await runner.runPpt({ images: assets, offlineOcr: true, language: 'zh' }))
+    assert.equal(providerError.status, 'failed')
+    assert.match(providerError.error, /NO_ADAPTER/)
+    assert.ok(!providerError.error.includes('sk-private123456789'), 'provider error secrets are redacted')
     mode = 'hold'
     const live = await runner.runPpt({ images: assets, offlineOcr: true })
     for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10))
@@ -3018,6 +3038,22 @@ await check('C11h a heavy run composes its agent with the preset roster and a mo
     }),
     /copy:canvas\.skills\.needModel/,
   )
+})
+
+await check('C11i a contained host Agent failure is surfaced instead of a missing-file error', async () => {
+  let listener
+  const created = await host.createCanvasSkillAgent({
+    agents: { async create(options) {
+      await options.setup({ on(name, callback) { if (name === 'agent/error') listener = callback }, systemPrompt: { section() {} } })
+      return { agent: { session: { deriveMessages: () => [] }, followup() {}, async whenIdle() {
+        listener({ agent: { id: 'failure-test' }, error: new Error('Model API returned 401 sk-fake123456789') })
+      }, cancel() {} }, async dispose() {} }
+    } },
+    defaultModel: { currentSelection: () => ({ provider: 'p', model: 'm' }) },
+    agentPreset: '', sessionId: 'failure-test', cwd: 'c', systemPrompt: 's',
+  })
+  await assert.rejects(created.whenIdle(), error => error.message.includes('401') && !error.message.includes('sk-fake123456789'))
+  await created.dispose()
 })
 
 // ------------------------------------------- C12. local skill library
@@ -4231,7 +4267,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         ok: true,
         json: async () => ({
           ok: true,
-          preview: { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
+          preview: JSON.parse(init.body).name?.endsWith('.pptx') ? { kind: 'slides', format: 'pptx', slides: [{ title: '文件预览正文', lines: ['第一页可编辑内容'], images: [] }, { title: '第二页', lines: ['第二页可编辑内容'], images: [] }], truncated: false } : { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
         }),
       }
     }
@@ -5584,6 +5620,13 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await waitForSelector(view, '[data-ppt-input]')
     const pptView = view.querySelector('[data-ppt-workspace]')
     assert.equal(pptView.hidden, false)
+    assert.equal(pptView.querySelector('[data-ppt-upload-empty]'), null, 'source thumbnails replace the upload hero')
+    assert.ok(pptView.querySelector('[data-ppt-add]'))
+    pptView.querySelector('[data-ppt-open-settings]').click()
+    await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="图片转 PPT 配置"]')
+    assert.ok(jsdomDocument.querySelector('[data-ppt-setup]'))
+    jsdomDocument.querySelector('[role="dialog"][aria-label="图片转 PPT 配置"] button[aria-label="关闭"]').click()
+    await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(pptUploaded[0].name, 'dsh-image-1.png')
     const pptUpload = pptView.querySelector('input[type="file"]')
     Object.defineProperty(pptUpload, 'files', { value: [new dom.window.File(['slide'], 'second.png', { type: 'image/png' })], configurable: true })
@@ -5599,6 +5642,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(pptSubmissions[0].images[0].name, 'second.png')
     assert.equal(pptSubmissions[0].offlineOcr, true)
     assert.ok(await waitUntil(() => pptView.querySelector('a[download="final.pptx"]')))
+    assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'no source images are shown in the generated slide viewer')
+    assert.ok(await waitUntil(() => pptView.querySelector('[data-ppt-slide="1"]')?.textContent.includes('第一页可编辑内容')), 'generated PPT opens inline without an extra click')
+    pptView.querySelector('[data-ppt-page="2"]').click()
+    assert.ok(await waitUntil(() => pptView.querySelector('[data-ppt-slide="2"]')?.textContent.includes('第二页可编辑内容')))
+    pptView.querySelector('[data-ppt-preview]').click()
+    await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="final.pptx"]')
+    assert.ok(await waitUntil(() => jsdomDocument.querySelector('[role="dialog"]')?.textContent.includes('文件预览正文')))
+    jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"] [aria-label="关闭"]').click()
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(pptView.hidden, true)

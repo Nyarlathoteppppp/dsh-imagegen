@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.9.0'
+export const PLUGIN_VERSION = '1.9.1'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -549,6 +549,9 @@ export interface CanvasSkillOutput {
 }
 
 export interface CanvasSkillTask {
+  /** Trace identifiers for finding the corresponding host execution log. */
+  agentSessionId?: string
+  runDirectory?: string
   /** Standalone PPT conversions retain their ordered input thumbnails. */
   pptImages?: CanvasAssetRef[]
   id: string

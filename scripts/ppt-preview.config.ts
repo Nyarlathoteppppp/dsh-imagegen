@@ -5,6 +5,6 @@ export default {
   entry: { preview: fileURLToPath(new URL('./ppt-preview.tsx', import.meta.url)) },
   outDir: fileURLToPath(new URL('../.ppt-preview', import.meta.url)),
   format: 'iife', sourcemap: false, clean: true,
-  deps: { alwaysBundle: ['react', 'react-dom'] },
+  deps: { alwaysBundle: ['react', 'react-dom', 'lucide-react'] },
   outputOptions: { entryFileNames: 'preview.js', banner: '', footer: '', intro: '' },
 }
