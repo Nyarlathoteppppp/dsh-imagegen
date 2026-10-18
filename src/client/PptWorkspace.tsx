@@ -4,7 +4,7 @@ import type { CanvasAssetRef, CanvasSkillCatalog, CanvasSkillTask } from '../pro
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
-import { CanvasFileOverlay } from './CanvasFilePreview.tsx'
+import { PptDeckPreview } from './PptDeckPreview.tsx'
 import { PptSetup, PPT_SKILL_NAME } from './PptSetup.tsx'
 import css from './ppt-workspace.module.css'
 
@@ -118,8 +118,8 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
     finally { setBusy(false) }
   }
   return <div className={css.workspace} hidden={!active} data-ppt-workspace="">
+    <header className={css.intro}><div><span className={css.eyebrow}>IMAGE → PPTX</span><h2>{tt('ppt.title')}</h2><p>{tt('ppt.description')}</p></div><button type="button" data-ppt-open-settings="" onClick={() => setSettingsOpen(true)}>{tt('ppt.openSettings')}</button></header>
     <aside className={css.sidebar}>
-      <header className={css.intro}><div><span className={css.eyebrow}>IMAGE → PPTX</span><h2>{tt('ppt.title')}</h2><p>{tt('ppt.description')}</p></div><button type="button" data-ppt-open-settings="" onClick={() => setSettingsOpen(true)}>{tt('ppt.openSettings')}</button></header>
       <section className={css.sourceSection} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); if (!busy) accept(Array.from(event.dataTransfer.files)) }}>
         <div className={css.sourceHeading}><strong>{tt('ppt.sources')}</strong><span>{images.length}/12</span></div>
         {images.length === 0 ? <button type="button" className={css.upload} data-ppt-upload-empty="" disabled={uploading || busy} onClick={() => fileInput.current?.click()}>
@@ -160,11 +160,11 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
       {tasks.length === 0 ? <div className={css.empty}><span className={css.fileIcon}>PPTX</span><h3>{tt('ppt.empty')}</h3><p>{tt('ppt.emptyHint')}</p></div> : <>
         <label className={css.taskPicker}><span>{tt('ppt.history')}</span><select aria-label={tt('ppt.history')} value={focused?.id ?? ''} onChange={event => setSelected(event.target.value)}>{tasks.map(task => <option key={task.id} value={task.id}>{new Date(task.startedAt).toLocaleString()} · {tt(`tasks.${task.status}` as never)}</option>)}</select></label>
         {focused ? <section className={css.result} data-ppt-task={focused.id} data-task-status={focused.status}>
-          <div className={css.resultHeader}><h3>{tt(`tasks.${focused.status}` as never)}</h3>
+          <div className={css.resultHeader} hidden={focused.status === 'completed'}><h3>{tt(`tasks.${focused.status}` as never)}</h3>
             {running(focused) ? <button type="button" onClick={() => { void api.canvasSkillCancel(focused.id).then(async () => setTasks(await api.pptTasks())).catch(error => setError(errorMessage(error))) }}>{tt('ppt.cancel')}</button> : null}
           </div>
-          <p className={focused.status === 'failed' ? css.failure : css.progress} role="status">{running(focused) ? `${focused.stage || tt('ppt.working')} · ${tt('canvas.elapsed', { seconds: Math.max(0, Math.floor((clock - focused.startedAt) / 1000)) })}` : focused.error || focused.stage}</p>
-          <div className={css.resultActions}>
+          <p hidden={focused.status === 'completed'} className={focused.status === 'failed' ? css.failure : css.progress} role="status">{running(focused) ? `${focused.stage || tt('ppt.working')} · ${tt('canvas.elapsed', { seconds: Math.max(0, Math.floor((clock - focused.startedAt) / 1000)) })}` : focused.error || focused.stage}</p>
+          <div className={css.resultActions} data-completed={focused.status === 'completed' || undefined}>
             <button type="button" disabled={busy || uploading} onClick={() => { commit(focused.pptImages ?? []); setError('') }}>{tt('ppt.reuseImages')}</button>
             {focused.status === 'failed' || focused.status === 'cancelled' ? <button type="button" disabled={!ready || busy || uploading || !focused.pptImages?.length} onClick={() => { commit(focused.pptImages ?? []); void submit(focused.pptImages) }}>{tt('ppt.retry')}</button> : null}
             {focused.status === 'failed' ? <><button type="button" onClick={() => setSettingsOpen(true)}>{tt('ppt.checkSetup')}</button><button type="button" data-ppt-diagnostic="" onClick={() => setDiagnostic(focused)}>{tt('ppt.diagnostic')}</button></> : null}
@@ -173,12 +173,7 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
           <div className={css.outputs}>{focused.output?.nodes.map(node => {
             const asset = node.metadata?.asset
             if (!asset || !asset.name?.toLowerCase().endsWith('.pptx')) return null
-            return <article key={node.id} className={css.deckCard} data-ppt-deck="">
-              <span className={css.fileIcon}>PPTX</span>
-              <strong>{asset.name || node.title}</strong>
-              <div className={css.deckActions}><button type="button" data-ppt-preview="" onClick={() => setPptPreview(asset)}>{tt('ppt.previewDeck')}</button><a href={asset.url} download={asset.name}>{tt('download')}</a></div>
-              <small>{tt('ppt.previewHint')}</small>
-            </article>
+            return <PptDeckPreview key={`${focused.id}-${asset.assetId}`} api={api} asset={asset} onExpand={() => setPptPreview(asset)} />
           })}</div>
         </section> : null}
       </>}
@@ -188,7 +183,7 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
       <p className={css.diagnosticHint}>{tt(diagnostic.agentSessionId ? 'ppt.diagnosticHint' : 'ppt.legacyDiagnostic')}</p>
       <textarea className={css.diagnosticText} readOnly rows={14} aria-label={tt('ppt.diagnostic')} onFocus={event => event.currentTarget.select()} value={JSON.stringify({ taskId: diagnostic.id, status: diagnostic.status, startedAt: new Date(diagnostic.startedAt).toISOString(), finishedAt: diagnostic.finishedAt ? new Date(diagnostic.finishedAt).toISOString() : undefined, agentSessionId: diagnostic.agentSessionId, runDirectory: diagnostic.runDirectory, error: diagnostic.error, inputCount: diagnostic.pptImages?.length }, null, 2)} />
     </PptDialog> : null}
-    {pptPreview ? createPortal(<CanvasFileOverlay key={pptPreview.assetId} api={api} asset={pptPreview} fileKind="office" title={pptPreview.name || 'PPTX'} onClose={() => setPptPreview(undefined)} />, document.body) : null}
+    {pptPreview ? <PptDialog title={pptPreview.name || 'PPTX'} close={() => setPptPreview(undefined)}><PptDeckPreview key={pptPreview.assetId} api={api} asset={pptPreview} /></PptDialog> : null}
     {sourcePreview ? <PptDialog title={sourcePreview.name || tt('ppt.previewSource')} close={() => setSourcePreview(undefined)}><img className={css.sourcePreview} src={sourcePreview.url} alt={sourcePreview.name || ''} /></PptDialog> : null}
   </div>
 }

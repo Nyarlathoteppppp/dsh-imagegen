@@ -7,6 +7,15 @@ export const zh = {
   "ppt.diagnosticHint": "这里保留任务、Agent 会话和运行目录，便于关联 DSH 运行日志。点击文本框可全选复制。",
   "ppt.legacyDiagnostic": "这是旧任务，未保存 Agent 会话和原始错误，无法从这个通用报错恢复根因。请提供任务时间附近的 DSH 运行日志；点击文本框可复制任务信息。",
 
+  "ppt.pages": "共 {count} 页",
+  "ppt.downloadDeck": "下载 PPTX",
+  "ppt.expand": "放大预览",
+  "ppt.pageNavigation": "幻灯片导航",
+  "ppt.goToPage": "转到第 {page} 页",
+  "ppt.previousPage": "上一页",
+  "ppt.nextPage": "下一页",
+  "ppt.contentPreview": "内容预览 · 复杂版式以 PowerPoint 为准",
+  "ppt.fitWindow": "适应窗口",
   "ppt.previewDeck": "预览 PPT",
   "ppt.previewHint": "内容预览支持逐页查看文字与内嵌图片；复杂版式请下载后用 PowerPoint 确认。",
 
@@ -1040,6 +1049,15 @@ export const en: Record<keyof typeof zh, string> = {
   "ppt.diagnosticHint": "Use the task, agent session and directory to locate the DSH execution logs. Click the text area to select all.",
   "ppt.legacyDiagnostic": "This older task did not retain its agent session or original error. Its root cause cannot be recovered from this generic message. Provide DSH logs around the task time. Click to copy the task details.",
 
+  "ppt.pages": "{count} slides",
+  "ppt.downloadDeck": "Download PPTX",
+  "ppt.expand": "Expand preview",
+  "ppt.pageNavigation": "Slide navigation",
+  "ppt.goToPage": "Go to slide {page}",
+  "ppt.previousPage": "Previous slide",
+  "ppt.nextPage": "Next slide",
+  "ppt.contentPreview": "Content preview · Check complex layouts in PowerPoint",
+  "ppt.fitWindow": "Fit to window",
   "ppt.previewDeck": "Preview PPT",
   "ppt.previewHint": "Content preview shows slide text and embedded pictures. Check complex layouts in PowerPoint after downloading.",
 
@@ -2063,6 +2081,15 @@ export const ru: Record<keyof typeof zh, string> = {
   "ppt.diagnosticHint": "Используйте задание, сеанс агента и каталог для поиска журналов DSH. Нажмите текст для выделения.",
   "ppt.legacyDiagnostic": "Старое задание не сохранило сеанс агента и исходную ошибку. Для определения причины нужны журналы DSH за время выполнения.",
 
+  "ppt.pages": "Слайдов: {count}",
+  "ppt.downloadDeck": "Скачать PPTX",
+  "ppt.expand": "Развернуть просмотр",
+  "ppt.pageNavigation": "Навигация по слайдам",
+  "ppt.goToPage": "Перейти к слайду {page}",
+  "ppt.previousPage": "Предыдущий слайд",
+  "ppt.nextPage": "Следующий слайд",
+  "ppt.contentPreview": "Просмотр содержимого · Сложная вёрстка — в PowerPoint",
+  "ppt.fitWindow": "По размеру окна",
   "ppt.previewDeck": "Просмотр PPT",
   "ppt.previewHint": "Просмотр показывает текст и встроенные изображения слайдов. Сложную вёрстку проверяйте в PowerPoint.",
 

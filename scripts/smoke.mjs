@@ -4267,7 +4267,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
         ok: true,
         json: async () => ({
           ok: true,
-          preview: { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
+          preview: JSON.parse(init.body).name?.endsWith('.pptx') ? { kind: 'slides', format: 'pptx', slides: [{ title: '文件预览正文', lines: ['第一页可编辑内容'], images: [] }, { title: '第二页', lines: ['第二页可编辑内容'], images: [] }], truncated: false } : { kind: 'text', format: 'txt', text: '文件预览正文\nsecond line\nthird line', truncated: false, lines: 3 },
         }),
       }
     }
@@ -5642,11 +5642,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(pptSubmissions[0].images[0].name, 'second.png')
     assert.equal(pptSubmissions[0].offlineOcr, true)
     assert.ok(await waitUntil(() => pptView.querySelector('a[download="final.pptx"]')))
-    assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'only final PPT cards are shown in results')
+    assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'no source images are shown in the generated slide viewer')
+    assert.ok(await waitUntil(() => pptView.querySelector('[data-ppt-slide="1"]')?.textContent.includes('第一页可编辑内容')), 'generated PPT opens inline without an extra click')
+    pptView.querySelector('[data-ppt-page="2"]').click()
+    assert.ok(await waitUntil(() => pptView.querySelector('[data-ppt-slide="2"]')?.textContent.includes('第二页可编辑内容')))
     pptView.querySelector('[data-ppt-preview]').click()
     await waitForSelector(jsdomDocument, '[role="dialog"][aria-label="final.pptx"]')
     assert.ok(await waitUntil(() => jsdomDocument.querySelector('[role="dialog"]')?.textContent.includes('文件预览正文')))
-    jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"] [aria-label="关闭预览"]').click()
+    jsdomDocument.querySelector('[role="dialog"][aria-label="final.pptx"] [aria-label="关闭"]').click()
     normalSwitch.click()
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(pptView.hidden, true)
