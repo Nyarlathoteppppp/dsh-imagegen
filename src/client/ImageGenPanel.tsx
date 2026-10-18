@@ -2732,7 +2732,7 @@ export function ImageGenPanel(props: {
                       <span aria-hidden="true">▤</span> {tt('gallery.grid')}
                     </button>
                   </div>
-                  <Select className={css.gallerySort} value={gallerySort} onChange={value => { setGallerySort(value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
+                  <Select variant="toolbar" className={css.gallerySort} value={gallerySort} onChange={value => { setGallerySort(value as 'newest' | 'oldest') }} aria-label={tt('gallery.sort')}>
                     <option value="newest">{tt('gallery.newest')}</option>
                     <option value="oldest">{tt('gallery.oldest')}</option>
                   </Select>

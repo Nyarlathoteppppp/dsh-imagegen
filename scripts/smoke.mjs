@@ -4608,6 +4608,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(view.querySelector('button[class*="generateButton"]'), null, 'gallery hides normal generation button')
     assert.equal(view.textContent?.includes('灵感案例'), false, 'gallery hides inspiration examples')
     assert.ok(view.querySelector('[data-gallery="true"]') !== null, 'gallery workspace is isolated')
+    assert.equal(view.querySelector('button[class*="gallerySort"]').getAttribute('data-variant'), 'toolbar', 'gallery sorting uses a compact toolbar select, not a full-width form field')
     assert.ok(jsdomDocument.querySelector('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]') !== null, 'history remains visible in gallery mode')
     assert.equal(view.querySelectorAll('[data-gallery="true"]').length, 2, 'gallery mode is active')
     assert.ok(view.querySelector('[data-gallery="true"] [data-gallery-add-conversation]') !== null, 'gallery entries expose add-to-conversation action')

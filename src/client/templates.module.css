@@ -590,7 +590,8 @@
 .floatingEntry {
   position: absolute;
   right: 24px;
-  bottom: 88px;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 40;
   display: inline-flex;
   align-items: center;
@@ -634,6 +635,6 @@
   .detail { height: 100%; }
   .detailActions { gap: 6px; }
   .footer { flex-wrap: wrap; padding: 8px 12px; }
-  .floatingEntry { right: 16px; bottom: 88px; padding: 11px 15px; }
+  .floatingEntry { right: 16px; padding: 11px 15px; }
 }
 @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
