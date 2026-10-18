@@ -2127,6 +2127,7 @@ export function ImageGenPanel(props: {
                     <button type="button" className={css.updateClose} aria-label={tt('update.close')} title={tt('update.close')} onClick={() => { setUpdateOpen(false) }}>×</button>
                   </header>
                   {update.installMode === 'host-managed' ? <div className={css.updateManaged} role="status">{tt('update.hostManagedHint')}</div> : null}
+                  {update.installMode === 'host' ? <div className={css.updateManaged} role="status">{tt('update.hostHint')}</div> : null}
                   {updateMessage !== null ? <div className={css.updateStatus} data-kind={updateResult === 'failed' ? 'failed' : 'ok'}>{updateMessage}</div> : null}
                   <div className={css.updateNotes}>
                     {update.releaseNotes !== undefined && update.releaseNotes.trim() !== '' ? renderMarkdown(update.releaseNotes) : <p>{tt('update.noNotes')}</p>}

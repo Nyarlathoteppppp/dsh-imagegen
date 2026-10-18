@@ -31,7 +31,7 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 - **让 Agent 安装：**把上面的安装命令发给 DSH、Codex 或其他 coding agent。
 - **指定版本：**使用 `@dickpy/dsh-imagegen@<版本号>`，或从 [GitHub Releases](https://github.com/dickpy/dsh-imagegen/releases) 下载 tgz 后安装。
 - **Web / CLI 升级：**重复执行 `add` 命令；插件也会在面板中提示新版本。更新后重启 `dsh web`。
-- **桌面端升级：**使用 DSH 桌面应用支持的插件管理流程。桌面 profile 由宿主管理，不应直接套用 Web 在线更新命令；若手动安装，需完全退出应用并匹配原 profile 的 pnpm 版本和 store。详见 [v1.8.0 更新说明](docs/releases/v1.8.0.md)。
+- **桌面端升级：**从插件1.8.2起，检测到宿主插件安装接口时，可直接在插件面板点击「在线更新」，由DSH内置插件管理器安装新版，完成后重启DSH。1.8.0/1.8.1的按钮已被旧逻辑禁用，首次需通过宿主支持的方式安装修复包。宿主未提供安装接口时需先升级DSH。详见 [v1.8.2 更新说明](docs/releases/v1.8.2.md)。
 - 渠道配置、历史记录和画廊数据保存在 DSH 宿主侧，正常升级不会清空。
 
 </details>

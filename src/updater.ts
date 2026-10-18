@@ -1,6 +1,8 @@
 /** GitHub Release discovery and explicit, user-triggered plugin updates. */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { PLUGIN_VERSION, type UpdateInfo } from './protocol.ts'
 import { recordDiagnostic, redactDiagnosticText } from './diagnostics-store.ts'
 export type { UpdateInfo } from './protocol.ts'
@@ -14,8 +16,20 @@ const CHECK_TIMEOUT_MS = 10_000
 const CACHE_TTL_MS = 15 * 60_000
 
 /** Optional launcher-owned facts, read without requiring a newer DSH package. */
-export interface UpdateHostContext { profile?: string; profileDir?: string }
-export interface UpdateInstallTarget { profile: string; installMode: 'cli' | 'host-managed' }
+export interface HostUpdateResult {
+  application?: string
+  bundle?: string
+  version?: string
+  error?: { code?: string; diagnostic?: string }
+  packageResult?: { exitCode?: number; output?: string; logPath?: string }
+}
+export interface UpdateHostContext {
+  profile?: string
+  profileDir?: string
+  /** The live host owns package-manager selection, locking and activation. */
+  installBundle?: (spec: string, options: { saveExact: boolean }) => Promise<HostUpdateResult>
+}
+export interface UpdateInstallTarget { profile: string; installMode: 'cli' | 'host' | 'host-managed' }
 
 interface GitHubRelease {
   tag_name?: unknown
@@ -77,7 +91,7 @@ export async function checkForUpdate(fetchFn: typeof fetch = fetch, now = Date.n
 }
 
 const VALID_PROFILE = /^[a-zA-Z0-9_-]+$/
-const DESKTOP_HINT = '桌面端 profile 由 DSH 应用管理，本插件不能通过 dsh plugin 更新。请使用宿主支持的插件管理流程；若宿主暂不支持更新，请完全退出桌面应用后，使用与该 profile 一致的 pnpm 安装新版，再重启应用。'
+const DESKTOP_HINT = '当前 DSH 桌面宿主未提供插件安装接口，无法在线更新。请先升级 DSH，或从 Release 下载插件安装包后按宿主支持的方式安装。'
 
 /** Explicit host facts win; Electron also passes an absolute profile directory. */
 export function profileFromProcess(argv: readonly string[] = process.argv, env: NodeJS.ProcessEnv = process.env, host: UpdateHostContext = {}): string {
@@ -102,7 +116,7 @@ export function updateInstallTarget(argv: readonly string[] = process.argv, env:
   const profile = profileFromProcess(argv, env, host)
   const desktop = profile === 'desktop' || env.DSH_DESKTOP === '1' || typeof process.versions.electron === 'string'
     || argv.some(arg => /[\\/]dsh-desktop-host[\\/]/.test(arg))
-  return { profile, installMode: desktop ? 'host-managed' : 'cli' }
+  return { profile, installMode: typeof host.installBundle === 'function' ? 'host' : desktop ? 'host-managed' : 'cli' }
 }
 
 /** Bounded, credential-redacted package-manager output for both UI and logs. */
@@ -113,8 +127,7 @@ function updateDiagnostic(value: string, limit = 6000): string {
     .replace(/((?:_authToken|npm_token|password)\s*[=:]\s*)[^\s]+/gi, '$1<redacted>'), limit)
 }
 
-/** Web/CLI updates retain the official package operation. Desktop instead
- * explains its managed lifecycle before spawning anything (#41). */
+/** Use the live host when available; CLI remains a Web-only fallback. */
 export function installUpdate(
   version: string,
   spawnFn: typeof spawn = spawn,
@@ -126,14 +139,39 @@ export function installUpdate(
   const { profile, installMode } = updateInstallTarget(argv, env, host)
   const command = process.platform === 'win32' ? 'dsh.cmd' : 'dsh'
   const args = ['plugin', '--profile', profile, 'add', `${PACKAGE_NAME}@${version}`]
-  const displayCommand = `${command} ${args.join(' ')}`
+  // A Release tarball is accepted by the host replacement flow, including HMR.
+  // A registry-name install is refused for an already installed HMR bundle;
+  // removing this running plugin first would destroy its own update route.
+  const tarball = `https://github.com/dickpy/dsh-imagegen/releases/download/v${version}/dickpy-dsh-imagegen-${version}.tgz`
+  const displayCommand = installMode === 'host' ? `pluginManager.installBundle(${tarball})` : `${command} ${args.join(' ')}`
   const started = Date.now()
   const failure = (message: string): Error => {
     const safe = updateDiagnostic(`profile: ${profile}\ncommand${installMode === 'host-managed' ? ' (not run)' : ''}: ${displayCommand}\n${message}`)
-    recordDiagnostic({ phase: 'config', channel: '', model: PACKAGE_NAME, mode: 'update', url: command, method: installMode === 'host-managed' ? 'CHECK' : 'SPAWN', message: safe, requestExcerpt: displayCommand, durationMs: Date.now() - started })
+    recordDiagnostic({ phase: 'config', channel: '', model: PACKAGE_NAME, mode: 'update', url: installMode === 'host' ? tarball : command, method: installMode === 'host' ? 'HOST' : installMode === 'host-managed' ? 'CHECK' : 'SPAWN', message: safe, requestExcerpt: displayCommand, durationMs: Date.now() - started })
     return new Error(safe)
   }
   if (installMode === 'host-managed') return Promise.reject(failure(DESKTOP_HINT))
+  if (installMode === 'host') return (async () => {
+    try {
+      const result = await host.installBundle!(tarball, { saveExact: true })
+      if (result === null || typeof result !== 'object') throw new Error('DSH returned an invalid installation result')
+      if (result.error !== undefined || !['applied', 'restart-required'].includes(result.application ?? '') || (result.packageResult?.exitCode !== undefined && result.packageResult.exitCode !== 0)) {
+        throw new Error([
+          `DSH: ${result.application ?? 'unknown'}${result.error?.code ? ` (${result.error.code})` : ''}`,
+          result.error?.diagnostic, result.packageResult?.output,
+          result.packageResult?.logPath ? `diagnostics: ${result.packageResult.logPath}` : '',
+        ].filter(Boolean).join('\n'))
+      }
+      if (result.bundle !== undefined && result.bundle !== PACKAGE_NAME) throw new Error(`DSH installed an unexpected bundle: ${result.bundle}`)
+      let installedVersion = result.version
+      // Older managers omit `version`; verify their installed manifest instead.
+      if (installedVersion === undefined && host.profileDir !== undefined) {
+        const manifest = JSON.parse(await readFile(join(host.profileDir, 'node_modules', '@dickpy', 'dsh-imagegen', 'package.json'), 'utf8')) as { name?: unknown; version?: unknown }
+        if (manifest.name === PACKAGE_NAME && typeof manifest.version === 'string') installedVersion = manifest.version
+      }
+      if (installedVersion !== version) throw new Error(`DSH installed version ${installedVersion ?? 'unknown'}; expected ${version}`)
+    } catch (caught) { throw failure(caught instanceof Error ? caught.message : String(caught)) }
+  })()
   return new Promise((resolve, reject) => {
     let child: ChildProcess
     try {
