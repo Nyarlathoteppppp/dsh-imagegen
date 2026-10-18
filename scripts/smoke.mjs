@@ -14,6 +14,7 @@ import { createServer, request as httpRequest } from 'node:http'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -207,11 +208,78 @@ await check('A3b updater recognizes desktop profiles and refuses CLI writes (#41
   assert.equal(host.updateInstallTarget(['node', 'dsh', 'web'], { DSH_DESKTOP: '1' }).installMode, 'host-managed')
   let spawned = false
   const rejectSpawn = () => { spawned = true; throw new Error('must not spawn') }
-  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, desktopArgv, {}), /桌面端.*应用管理/)
-  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, ['node','dsh','web'], {}, { profile: 'desktop' }), /桌面端/)
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, desktopArgv, {}), /桌面宿主.*安装接口/)
+  await assert.rejects(host.installUpdate('9.9.9', rejectSpawn, ['node','dsh','web'], {}, { profile: 'desktop' }), /桌面宿主/)
   await assert.rejects(host.installUpdate('9.9.9; touch nope', rejectSpawn, ['node','dsh','web'], {}), /invalid update version/)
   assert.equal(spawned, false, 'desktop and invalid versions cannot start a package operation')
 })
+await check('A3e desktop updates delegate to the host and verify its actual outcome', async () => {
+  const calls = []
+  const neverSpawn = () => { throw new Error('desktop must not spawn a CLI') }
+  const context = { profile: 'desktop', installBundle: async (spec, options) => {
+    calls.push({ spec, options })
+    return { application: 'restart-required', bundle: packageJson.name, version: '9.9.9', packageResult: { exitCode: 0 } }
+  } }
+  assert.equal(host.updateInstallTarget([], {}, context).installMode, 'host')
+  await host.installUpdate('9.9.9', neverSpawn, [], {}, context)
+  assert.deepEqual(calls, [{ spec: 'https://github.com/dickpy/dsh-imagegen/releases/download/v9.9.9/dickpy-dsh-imagegen-9.9.9.tgz', options: { saveExact: true } }])
+  await assert.rejects(host.installUpdate('9.9.9; bad', neverSpawn, [], {}, context), /invalid update version/)
+  assert.equal(calls.length, 1, 'invalid versions never reach the host')
+  for (const result of [
+    null, {},
+    { application: 'failed', error: { code: 'already-installed', diagnostic: 'native refusal' } },
+    { application: 'cancelled', version: '9.9.9' },
+    { application: 'overridden', version: '9.9.9' },
+    { application: 'applied', version: '9.9.9', packageResult: { exitCode: 1 } },
+    { application: 'applied', version: '9.9.8' },
+    { application: 'applied', version: '9.9.9', bundle: '@other/bundle' },
+    { application: 'applied' },
+  ]) {
+    await assert.rejects(host.installUpdate('9.9.9', neverSpawn, [], {}, { ...context, installBundle: async () => result }), undefined, JSON.stringify(result))
+  }
+  await assert.rejects(host.installUpdate('9.9.9', neverSpawn, [], {}, { ...context, installBundle: async () => ({ application: 'failed', error: { code: 'operation-error' }, packageResult: { exitCode: 1, output: '_authToken=npm-native-secret\nERR_PNPM_UNEXPECTED_STORE', logPath: '/profile/diagnostics.log' } }) }), error => {
+    assert.match(error.message, /ERR_PNPM_UNEXPECTED_STORE/)
+    assert.match(error.message, /diagnostics.log/)
+    assert.doesNotMatch(error.message, /npm-native-secret/)
+    return true
+  })
+  await assert.rejects(host.installUpdate('9.9.9', neverSpawn, [], {}, { ...context, installBundle: async () => { throw new Error('host offline') } }), /host offline/)
+  const profileDir = join(smokeHome, 'native-update-profile')
+  const packageDir = join(profileDir, 'node_modules', '@dickpy', 'dsh-imagegen')
+  mkdirSync(packageDir, { recursive: true })
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: packageJson.name, version: '9.9.9' }))
+  await host.installUpdate('9.9.9', neverSpawn, [], {}, { ...context, profileDir, installBundle: async () => ({ application: 'applied' }) })
+})
+
+await check('A3f desktop update routes expose native capability and propagate installation failures', async () => {
+  const savedFetch = globalThis.fetch
+  host.clearUpdateCache()
+  globalThis.fetch = async () => new Response(JSON.stringify({ tag_name: 'v9.9.9' }), { status: 200, headers: { 'content-type': 'application/json' } })
+  let installs = 0, fail = false
+  try {
+    const routes = host.makeRoutes({ settings: { describe: () => [], mutate: async () => {} }, resolve: () => ({ apiUrl: '', apiKey: '' }), resolveUpdateContext: () => ({ profile: 'desktop', installBundle: async spec => {
+      installs += 1
+      assert.equal(spec, 'https://github.com/dickpy/dsh-imagegen/releases/download/v9.9.9/dickpy-dsh-imagegen-9.9.9.tgz')
+      return fail ? { application: 'failed', error: { code: 'operation-error', diagnostic: 'native install failed' } } : { application: 'restart-required', bundle: packageJson.name, version: '9.9.9' }
+    } }) })
+    const invoke = async (path, body = {}) => {
+      const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), { method: 'POST', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1' } })
+      let response
+      const promise = routes.find(route => route.path.endsWith(path)).handler(req, { writeHead() {}, end(payload) { response = JSON.parse(payload) } })
+      await promise
+      return response
+    }
+    assert.equal((await invoke('/update/check')).update.installMode, 'host')
+    assert.equal((await invoke('/update/apply', { version: '1.0.0' })).code, 'update-not-available')
+    assert.equal(installs, 0)
+    assert.equal((await invoke('/update/apply', { version: '9.9.9' })).updatedVersion, '9.9.9')
+    fail = true
+    const failure = await invoke('/update/apply', { version: '9.9.9' })
+    assert.equal(failure.ok, false)
+    assert.match(failure.message, /native install failed/)
+  } finally { globalThis.fetch = savedFetch; host.clearUpdateCache() }
+})
+
 await check('A3c updater preserves stderr, pnpm store guidance and diagnostics (#41)', async () => {
   const calls=[]
   const fakeSpawn = (code, stderr='', error) => (command,args,options) => {
@@ -3956,7 +4024,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const path = String(input)
     requestPaths.push(path)
     if (path.endsWith('/update/check')) return { ok: true, json: async () => ({ ok: true, update: { currentVersion: '1.7.0', latestVersion: '9.9.9', updateAvailable: true, releaseUrl: 'https://github.com/dickpy/dsh-imagegen/releases', releaseNotes: 'Fixture notes', profile: updateInstallMode === 'cli' ? 'web' : 'desktop', installMode: updateInstallMode } }) }
-    if (path.endsWith('/update/apply')) { updateApplyCalls += 1; return { ok: true, json: async () => ({ ok: false, code: 'update-failed', message: 'profile: web\nERR_PNPM_UNEXPECTED_STORE: test store mismatch' }) } }
+    if (path.endsWith('/update/apply')) { updateApplyCalls += 1; return { ok: true, json: async () => updateInstallMode === 'host' ? { ok: true, updatedVersion: '9.9.9', restartRequired: true } : ({ ok: false, code: 'update-failed', message: 'profile: web\nERR_PNPM_UNEXPECTED_STORE: test store mismatch' }) } }
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
@@ -4496,11 +4564,20 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     updateInstallMode = 'host-managed'
     jsdomDocument.dispatchEvent(new dom.window.Event('visibilitychange'))
     await new Promise(resolve => setTimeout(resolve, 50))
-    const managedUpdate = [...view.querySelectorAll('button')].find(button => button.textContent === '由桌面端管理')
+    const managedUpdate = [...view.querySelectorAll('button')].find(button => button.textContent === '宿主缺少安装接口')
     assert.ok(managedUpdate?.disabled, 'desktop does not offer the impossible CLI install')
-    assert.ok(view.textContent.includes('桌面端插件由 DSH 应用管理'), 'desktop explains the update procedure')
+    assert.ok(view.textContent.includes('当前 DSH 桌面宿主未提供插件安装接口'), 'desktop explains the update procedure')
     managedUpdate.click()
     assert.equal(updateApplyCalls, 1, 'managed mode never sends an apply request')
+    updateInstallMode = 'host'
+    jsdomDocument.dispatchEvent(new dom.window.Event('visibilitychange'))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const nativeUpdate = [...view.querySelectorAll('button')].find(button => button.textContent === '在线更新')
+    assert.ok(nativeUpdate && !nativeUpdate.disabled, 'native host capability restores the desktop update button')
+    nativeUpdate.click()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(updateApplyCalls, 2)
+    assert.ok(view.textContent.includes('已更新到 9.9.9'), 'native install success is shown with restart instructions')
     view.querySelector('[aria-label="关闭"][title="关闭"]')?.click()
     await new Promise(resolve => setTimeout(resolve, 25))
     assert.equal(view.querySelector('[role="dialog"][aria-label="发现新版本"]'), null, 'update popover closes before other dialog regressions')

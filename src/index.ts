@@ -1027,9 +1027,11 @@ export function apply(ctx: Context, config?: Config): (() => void) | void {
           settingsNamespace,
           resolveUpdateContext: () => {
             const host = (sctx as unknown as { get(name: string): unknown }).get('profileContext') as { name?: unknown; dir?: unknown } | undefined
+            const manager = (sctx as unknown as { get(name: string): unknown }).get('pluginManager') as Pick<import('./updater.ts').UpdateHostContext, 'installBundle'> | undefined
             return {
               ...(typeof host?.name === 'string' ? { profile: host.name } : {}),
               ...(typeof host?.dir === 'string' ? { profileDir: host.dir } : {}),
+              ...(typeof manager?.installBundle === 'function' ? { installBundle: (spec: string, options: { saveExact: boolean }) => manager.installBundle!(spec, options) } : {}),
             }
           },
           resolve: () => {
