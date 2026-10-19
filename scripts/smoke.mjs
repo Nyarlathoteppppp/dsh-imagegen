@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { promises as fsPromises, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -2763,12 +2763,85 @@ await check('C11d heavy skills refuse to start without the agent runtime, then p
   assert.match(String(produced.metadata.asset.name), /\.pptx$/)
 })
 
+await check('C11ppt-progress exposes real host activity and validated page records without model reasoning or tool output', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-progress-'))
+  const events = []
+  const session = { get seq() { return events.length }, eventAt(index) { return events[index] }, deriveMessages: () => [] }
+  const task = { id: 'skillrun-progress', canvasId: 'ppt', startedAt: Date.now(), pptImages: [{}, {}] }
+  const monitor = new host.PptProgressMonitor(task, session, root, host.canvasSkillCopy('zh'))
+  try {
+    events.push({ type: 'step/start', data: { turn: 1, step: 1 } }, { type: 'tool/call', data: { callId: 'shell-1', name: 'shell', arguments: JSON.stringify({ command: 'editppt page hints --token sk-secret-do-not-show' }) } })
+    await monitor.refresh()
+    assert.match(task.progress.currentOperation, /shell/)
+    assert.match(task.progress.currentOperation, /文字提示/)
+    events.push({ type: 'tool/result', data: { message: { callId: 'shell-1', isError: true, content: [{ type: 'text', text: 'tool-secret-output' }] } } }, { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'private-model-reasoning' }] } } })
+    await monitor.refresh()
+    assert.ok(task.progress.events.some(event => event.state === 'warning'))
+    const jobs = { pages: [{ status: 'recorded', result: { validation_passed: true } }, { status: 'dispatched', result: { validation_passed: false } }] }
+    writeFileSync(join(root, 'page_jobs.json'), JSON.stringify(jobs))
+    writeFileSync(join(root, 'run_state.json'), JSON.stringify({ status: 'pages_dispatched' }))
+    await monitor.refresh()
+    assert.deepEqual(task.progress.pages.map(page => page.state), ['validated', 'running'])
+    assert.equal(task.progress.upstreamStage, 'pages_dispatched')
+    const count = task.progress.events.length, activity = task.progress.lastActivityAt
+    await monitor.refresh()
+    assert.equal(task.progress.events.length, count, 'polling unchanged files does not invent progress')
+    assert.equal(task.progress.lastActivityAt, activity, 'polling does not reset the last actual activity time')
+    jobs.pages[1] = { status: 'accepted', result: { validation_passed: true } }
+    writeFileSync(join(root, 'page_jobs.json'), JSON.stringify(jobs))
+    writeFileSync(join(root, 'run_state.json'), JSON.stringify({ status: 'deck_validated' }))
+    await monitor.refresh()
+    assert.equal(task.progress.pages.filter(page => page.state === 'validated').length, 2)
+    assert.equal(task.status, undefined, 'upstream page records cannot mark the overall task completed')
+    const serialized = JSON.stringify(task.progress)
+    for (const secret of ['sk-secret', 'tool-secret-output', 'private-model-reasoning']) assert.ok(!serialized.includes(secret))
+    assert.ok(!serialized.includes('%'), 'there is no fabricated percentage')
+    await monitor.stop()
+    const stoppedCount = task.progress.events.length
+    events.push({ type: 'step/start', data: {} })
+    await monitor.refresh()
+    assert.equal(task.progress.events.length, stoppedCount, 'cancelled or settled monitors cannot emit late progress')
+  } finally { await monitor.stop(); rmSync(root, { recursive: true, force: true }) }
+})
+
+await check('C11ppt-store immutable checkpoints survive Windows replacement locks, overlapping writes and partial files', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-checkpoint-'))
+  let activeWrites = 0, maximumWrites = 0, renames = 0
+  const io = { ...fsPromises,
+    async rename() { renames++; throw Object.assign(new Error('Windows destination sharing violation'), { code: 'EPERM' }) },
+    async writeFile(...args) { activeWrites++; maximumWrites = Math.max(maximumWrites, activeWrites); try { await new Promise(r => setTimeout(r, 10)); return await fsPromises.writeFile(...args) } finally { activeWrites-- } },
+  }
+  const store = new host.PptTaskStore(() => root, io)
+  const task = { id: 'skillrun-lock-test', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'queued', startedAt: 1 }
+  try {
+    mkdirSync(join(root, 'ppt-tasks'))
+    writeFileSync(join(root, 'ppt-tasks', task.id + '.json'), JSON.stringify(task))
+    const first = store.write(task)
+    task.status = 'running'
+    const second = store.write(task)
+    task.status = 'completed'; task.finishedAt = 3
+    const third = store.write(task)
+    await Promise.all([first, second, third])
+    assert.equal(renames, 0, 'PPT persistence must not replace a locked Windows destination')
+    assert.equal(maximumWrites, 1, 'writes for the same task are serialized')
+    const names = await fsPromises.readdir(join(root, 'ppt-tasks'))
+    const snapshots = await Promise.all(names.filter(n => n !== task.id + '.json').sort().map(n => fsPromises.readFile(join(root, 'ppt-tasks', n), 'utf8').then(JSON.parse)))
+    assert.deepEqual(snapshots.map(t => t.status), ['queued', 'running', 'completed'], 'each queued write captures its own immutable state')
+    writeFileSync(join(root, 'ppt-tasks', `${task.id}.${Date.now()+60000}.dead-beef.json`), '{"status":')
+    writeFileSync(join(root, 'ppt-tasks', `${task.id}.json.dead-beef.tmp`), '{"status":')
+    const restored = await new host.PptTaskStore(() => root).list()
+    assert.equal(restored.length, 1)
+    assert.equal(restored[0].status, 'completed', 'partial checkpoints cannot hide the preceding complete snapshot')
+    assert.equal(JSON.parse(readFileSync(join(root, 'ppt-tasks', task.id+'.json'), 'utf8')).status, 'queued', 'the legacy record was never overwritten')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
 // Standalone conversion exercises real task persistence and the shared runner,
 // substituting only the agent/API calls (no paid models in regression tests).
 await check('C11ppt standalone PPT validates input, preserves order, persists results and rejects incomplete outputs', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-ppt-conversion-'))
   const assets = ['first.png', 'second.png'].map(assetId => ({ assetId, url: `/api/dsh-imagegen/canvas/asset/${assetId}`, mime: 'image/png', bytes: pngBytes.length, width: 1, height: 1, origin: 'upload', name: assetId }))
-  let mode = 'ok', stopped = 0, recordedPrompt = '', recordedInputs = []
+  let mode = 'ok', stopped = 0, recordedPrompt = '', recordedInputs = [], failPersistence = false, failHistoryRead = false
   let release
   const backend = {
     ...canvasBackend,
@@ -2776,6 +2849,11 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
     async materialize(asset, target) { recordedInputs.push([asset.assetId, target]); writeFileSync(target, pngBytes) },
   }
   const options = { backend: { canvas: backend }, enabled: () => true, heavyEnabled: () => true, allowlist: () => [], runRoot: () => root, dataRoot: () => root, heavyTimeoutMs: () => 30_000, pptCommand: async () => '/test/python/bin/editppt' }
+  const taskStore = new host.PptTaskStore(() => root)
+  options.pptTasks = {
+    async write(task) { if (failPersistence && task.status !== 'queued') throw Object.assign(new Error('EPERM: checkpoint could not be saved sk-private123456789'), { code: 'EPERM' }); return taskStore.write(task) },
+    async list() { if (failHistoryRead) throw new Error('EPERM: task directory cannot be read'); return taskStore.list() },
+  }
   const runner = new host.SkillRunner(options)
   const registry = { async list() { return [{ name: 'image-to-editable-ppt', description: 'PPT skill', path: '/upstream/image-to-editable-ppt/SKILL.md' }] }, async get() { return { name: 'image-to-editable-ppt', content: '# upstream body\nFollow upstream commands.' } } }
   runner.attach({ registry, agents: {
@@ -2860,6 +2938,23 @@ await check('C11ppt standalone PPT validates input, preserves order, persists re
     const afterRestart = await restarted.pptTasks()
     assert.equal(afterRestart.find(item => item.id === interrupted.id).status, 'failed')
     assert.ok(afterRestart.find(item => item.id === interrupted.id).error)
+    failPersistence = true; mode = 'ok'
+    const saveFailed = await wait(await runner.runPpt({ images: assets, offlineOcr: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(saveFailed.status, 'completed', 'terminal checkpoint errors must not mark a generated PPT as failed')
+    assert.equal(saveFailed.error, undefined)
+    assert.ok(saveFailed.output.nodes.some(node => node.metadata.asset?.name === 'final.pptx'))
+    assert.match(saveFailed.persistenceError, /EPERM/)
+    assert.ok(!saveFailed.persistenceError.includes('sk-private123456789'))
+    mode = 'no-deck'
+    const realFailure = await wait(await runner.runPpt({ images: assets, offlineOcr: true }))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(realFailure.status, 'failed')
+    assert.ok(!realFailure.error.includes('EPERM'), 'a history write failure must not overwrite the actual conversion error')
+    assert.match(realFailure.persistenceError, /EPERM/)
+    failHistoryRead = true
+    assert.equal((await runner.pptTasks()).find(t => t.id === saveFailed.id).status, 'completed', 'live results remain accessible if history becomes unreadable')
+    failHistoryRead = false; failPersistence = false
     const noAgent = new host.SkillRunner(options)
     await assert.rejects(noAgent.runPpt({ images: assets, offlineOcr: true }))
   } finally { release?.(); rmSync(root, { recursive: true, force: true }) }
@@ -4175,7 +4270,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.endsWith('/ppt/run')) {
       const payload = JSON.parse(init.body)
       pptSubmissions.push(payload)
-      const task = { id: 'ppt-client-1', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'completed', startedAt: Date.now(), pptImages: payload.images, output: { nodes: [{ id: 'ppt-file', type: 'file', title: 'final.pptx', metadata: { asset: { assetId: 'deck.pptx', url: '/api/dsh-imagegen/canvas/asset/deck.pptx', name: 'final.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } } }], connections: [], warnings: [] } }
+      const task = { id: 'ppt-client-1', persistenceError: 'EPERM: fixture checkpoint warning', canvasId: 'ppt', skillId: 'ppt.fromImages', label: 'PPT', tier: 'heavy', status: 'completed', startedAt: Date.now(), pptImages: payload.images, output: { nodes: [{ id: 'ppt-file', type: 'file', title: 'final.pptx', metadata: { asset: { assetId: 'deck.pptx', url: '/api/dsh-imagegen/canvas/asset/deck.pptx', name: 'final.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } } }], connections: [], warnings: [] } }
       pptClientTasks = [task]
       return { ok: true, json: async () => ({ ok: true, task }) }
     }
@@ -5677,6 +5772,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     assert.equal(pptSubmissions[0].images[0].name, 'second.png')
     assert.equal(pptSubmissions[0].offlineOcr, true)
     assert.ok(await waitUntil(() => pptView.querySelector('a[download="final.pptx"]')))
+    assert.ok(pptView.textContent.includes('EPERM: fixture checkpoint warning'), 'a persistence warning stays visible without hiding the completed deck')
     assert.equal(pptView.querySelectorAll('[data-ppt-task] img').length, 0, 'no source images are shown in the generated slide viewer')
     assert.ok(await waitUntil(() => pptView.querySelector('[data-ppt-slide="1"]')?.textContent.includes('第一页可编辑内容')), 'generated PPT opens inline without an extra click')
     pptView.querySelector('[data-ppt-page="2"]').click()

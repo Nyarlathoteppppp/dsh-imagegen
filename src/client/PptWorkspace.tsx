@@ -4,6 +4,7 @@ import type { CanvasAssetRef, CanvasSkillCatalog, CanvasSkillTask } from '../pro
 import type { ImageGenApi } from './api.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { useImageGenLanguageTick } from './use-language.ts'
+import { PptProgressCard } from './PptProgressCard.tsx'
 import { PptDeckPreview } from './PptDeckPreview.tsx'
 import { PptSetup, PPT_SKILL_NAME } from './PptSetup.tsx'
 import css from './ppt-workspace.module.css'
@@ -164,11 +165,13 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
             {running(focused) ? <button type="button" onClick={() => { void api.canvasSkillCancel(focused.id).then(async () => setTasks(await api.pptTasks())).catch(error => setError(errorMessage(error))) }}>{tt('ppt.cancel')}</button> : null}
           </div>
           <p hidden={focused.status === 'completed'} className={focused.status === 'failed' ? css.failure : css.progress} role="status">{running(focused) ? `${focused.stage || tt('ppt.working')} · ${tt('canvas.elapsed', { seconds: Math.max(0, Math.floor((clock - focused.startedAt) / 1000)) })}` : focused.error || focused.stage}</p>
+          <PptProgressCard key={focused.id} task={focused} clock={clock} onDiagnostic={() => setDiagnostic(focused)} />
           <div className={css.resultActions} data-completed={focused.status === 'completed' || undefined}>
             <button type="button" disabled={busy || uploading} onClick={() => { commit(focused.pptImages ?? []); setError('') }}>{tt('ppt.reuseImages')}</button>
             {focused.status === 'failed' || focused.status === 'cancelled' ? <button type="button" disabled={!ready || busy || uploading || !focused.pptImages?.length} onClick={() => { commit(focused.pptImages ?? []); void submit(focused.pptImages) }}>{tt('ppt.retry')}</button> : null}
-            {focused.status === 'failed' ? <><button type="button" onClick={() => setSettingsOpen(true)}>{tt('ppt.checkSetup')}</button><button type="button" data-ppt-diagnostic="" onClick={() => setDiagnostic(focused)}>{tt('ppt.diagnostic')}</button></> : null}
+            {focused.status === 'failed' ? <><button type="button" onClick={() => setSettingsOpen(true)}>{tt('ppt.checkSetup')}</button></> : null}
           </div>
+          {focused.persistenceError ? <p className={css.persistenceWarning} role="status">{tt('ppt.persistenceWarning', { error: focused.persistenceError })}</p> : null}
           {focused.output?.warnings.map((warning, index) => <p key={index} className={css.note}>{warning}</p>)}
           <div className={css.outputs}>{focused.output?.nodes.map(node => {
             const asset = node.metadata?.asset
@@ -181,7 +184,7 @@ export function PptWorkspace({ api, active, importRequest, onImported }: { api: 
     {settingsOpen ? <PptDialog title={tt('ppt.settingsTitle')} close={() => setSettingsOpen(false)}><PptSetup /></PptDialog> : null}
     {diagnostic ? <PptDialog title={tt('ppt.diagnostic')} close={() => setDiagnostic(undefined)}>
       <p className={css.diagnosticHint}>{tt(diagnostic.agentSessionId ? 'ppt.diagnosticHint' : 'ppt.legacyDiagnostic')}</p>
-      <textarea className={css.diagnosticText} readOnly rows={14} aria-label={tt('ppt.diagnostic')} onFocus={event => event.currentTarget.select()} value={JSON.stringify({ taskId: diagnostic.id, status: diagnostic.status, startedAt: new Date(diagnostic.startedAt).toISOString(), finishedAt: diagnostic.finishedAt ? new Date(diagnostic.finishedAt).toISOString() : undefined, agentSessionId: diagnostic.agentSessionId, runDirectory: diagnostic.runDirectory, error: diagnostic.error, inputCount: diagnostic.pptImages?.length }, null, 2)} />
+      <textarea className={css.diagnosticText} readOnly rows={14} aria-label={tt('ppt.diagnostic')} onFocus={event => event.currentTarget.select()} value={JSON.stringify({ taskId: diagnostic.id, status: diagnostic.status, startedAt: new Date(diagnostic.startedAt).toISOString(), finishedAt: diagnostic.finishedAt ? new Date(diagnostic.finishedAt).toISOString() : undefined, agentSessionId: diagnostic.agentSessionId, runDirectory: diagnostic.runDirectory, error: diagnostic.error, persistenceError: diagnostic.persistenceError, stage: diagnostic.stage, phase: diagnostic.phase, progress: diagnostic.progress, inputCount: diagnostic.pptImages?.length }, null, 2)} />
     </PptDialog> : null}
     {pptPreview ? <PptDialog title={pptPreview.name || 'PPTX'} close={() => setPptPreview(undefined)}><PptDeckPreview key={pptPreview.assetId} api={api} asset={pptPreview} /></PptDialog> : null}
     {sourcePreview ? <PptDialog title={sourcePreview.name || tt('ppt.previewSource')} close={() => setSourcePreview(undefined)}><img className={css.sourcePreview} src={sourcePreview.url} alt={sourcePreview.name || ''} /></PptDialog> : null}

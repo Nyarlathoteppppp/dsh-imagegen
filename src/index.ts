@@ -344,6 +344,8 @@ export { appendGallery, clearGallery, listGallery, readGalleryImage, removeGalle
 export { listTemplates, readTemplateImage, refreshTemplates, sampleTemplates, syncAllTemplates, clearTemplateMemo } from './templates-store.ts'
 export { addTemplateFavorite, clearTemplateFavoritesMemo, listTemplateFavorites, removeTemplateFavorite } from './template-favorites.ts'
 export { putObject, setStorageSyncHandler, testStorage, type StorageSyncConfig } from './storage-sync.ts'
+export { PptProgressMonitor, pptActivity } from './ppt-progress.ts'
+export { PptTaskStore } from './ppt-task-store.ts'
 export { PptRuntime } from './ppt-runtime.ts'
 export { agentSessionFailure, SkillRunner, setSkillTranslate, setSkillLanguage, canvasSkillCopy } from './skill-runner.ts'
 export { builtinCanvasSkills, canvasSkillCatalog, EDITABLE_PPT_SKILL, findCanvasSkill, isEditablePptSkill, mergeExternalSkills, tierOfExternalSkill } from './skills-catalog.ts'
