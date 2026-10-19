@@ -148,3 +148,22 @@
  .fitLabel { margin-left: auto; }
  .slidePaper { min-height: 160px; }
 }
+
+.persistenceWarning { padding: 10px 12px; border: 1px solid #d4b56c; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.progressCard { flex: none; padding: 16px; margin-top: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: var(--dsw-alias-bg-layer-2); }
+.progressCard > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-size: 13px; }
+.progressCard > small { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.progressCard .currentOperation { margin-bottom: 5px; color: var(--dsw-alias-label-primary); font-weight: 500; }
+.progressCard .idleNote { margin-top: 8px; padding: 9px 12px; border-left: 2px solid #d0a84c; }
+.activityLog { max-height: 220px; overflow: auto; list-style: none; padding: 0; margin: 12px 0 0; font-size: 12px; }
+.activityLog li { display: flex; gap: 12px; padding: 7px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.activityLog time { flex: none; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.activityLog span { overflow-wrap: anywhere; }
+.activityLog [data-state=warning] span { color: #b77b1d; }
+.pageProgress { margin-top: 14px; font-size: 12px; }
+.pageProgress ul { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 10px 0; padding: 0; }
+.pageProgress li { display: flex; gap: 10px; padding: 7px 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; }
+.pageProgress li span { color: var(--dsw-alias-label-secondary); }
+.pageProgress li[data-state=validated] { border-color: #60a783; }
+.progressCard summary { cursor: pointer; font-size: 12px; }

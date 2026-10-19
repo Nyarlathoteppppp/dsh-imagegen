@@ -50,6 +50,8 @@ import {
   type ExternalSkillSummary,
 } from './skills-catalog.ts'
 import { fileKindOf } from './canvas-store.ts'
+import { PptTaskStore } from './ppt-task-store.ts'
+import { pptActivity, PptProgressMonitor } from './ppt-progress.ts'
 
 // ---------------------------------------------------------------- contracts
 
@@ -157,6 +159,8 @@ export interface SkillRunnerOptions {
   /** Upstream home of the deck pipeline, surfaced as a one-click install. */
   pptInstallUrl?: string
   pptCommand?: () => Promise<string>
+  /** Durable task storage seam; defaults to immutable filesystem checkpoints. */
+  pptTasks?: Pick<PptTaskStore, 'write' | 'list'>
 }
 
 // ---------------------------------------------------------------- constants
@@ -394,9 +398,11 @@ export class SkillRunner {
   private readonly cancellers = new Map<string, { dispose: () => Promise<void> }>()
   private tail: Promise<void> = Promise.resolve()
   private backend: SkillRunnerBackend
+  private readonly pptStore: Pick<PptTaskStore, 'write' | 'list'>
 
   constructor(private readonly options: SkillRunnerOptions) {
     this.backend = { ...options.backend }
+    this.pptStore = options.pptTasks ?? new PptTaskStore(options.dataRoot)
   }
 
   /**
@@ -504,12 +510,16 @@ export class SkillRunner {
 
   /** Durable conversion history survives panel reloads and host restarts. */
   async pptTasks(): Promise<CanvasSkillTask[]> {
-    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
-    const files = await fs.readdir(dir).catch(() => [])
     const persisted: CanvasSkillTask[] = []
-    for (const name of files.filter(name => /^skillrun-[\w-]+\.json$/.test(name))) {
-      const task = await fs.readFile(path.join(dir, name), 'utf8').then(raw => JSON.parse(raw) as CanvasSkillTask).catch(() => undefined)
-      if (task === undefined || task.canvasId !== 'ppt' || task.id !== name.slice(0, -5)) continue
+    let saved: CanvasSkillTask[]
+    try { saved = await this.pptStore.list() }
+    catch (error) {
+      const live = [...this.tasks.values()].filter(task => task.canvasId === 'ppt')
+      if (live.length === 0) throw error
+      for (const task of live) task.persistenceError = redactDiagnosticText(messageOf(error))
+      return live.sort((a, b) => b.startedAt - a.startedAt)
+    }
+    for (const task of saved) {
       const live = this.tasks.get(task.id)
       if (live !== undefined) { persisted.push(live); continue }
       if (task.status === 'queued' || task.status === 'running') {
@@ -524,14 +534,18 @@ export class SkillRunner {
     return persisted.sort((a, b) => b.startedAt - a.startedAt)
   }
 
-  private async persistPpt(task: CanvasSkillTask): Promise<void> {
+  private async persistPpt(task: CanvasSkillTask, required = false): Promise<void> {
     if (task.canvasId !== 'ppt') return
-    const dir = path.join(this.options.dataRoot(), 'ppt-tasks')
-    await fs.mkdir(dir, { recursive: true })
-    const file = path.join(dir, `${task.id}.json`)
-    const temporary = `${file}.${randomUUID()}.tmp`
-    await fs.writeFile(temporary, JSON.stringify(task), 'utf8')
-    await fs.rename(temporary, file)
+    const { persistenceError: _previous, ...snapshot } = task
+    try {
+      await this.pptStore.write(snapshot)
+      delete task.persistenceError
+    } catch (error) {
+      task.persistenceError = redactDiagnosticText(messageOf(error))
+      // The initial queue record is required before starting work. Later history errors
+      // must not abort the Agent, erase its real error, or invalidate a completed deck.
+      if (required) throw error
+    }
   }
 
   private async startTask(request: CanvasSkillRunRequest, skill: CanvasSkillDescriptor, inputs: RunInput[], ppt = false): Promise<CanvasSkillTask> {
@@ -550,8 +564,9 @@ export class SkillRunner {
       ...ppt ? { pptImages: inputs.map(input => input.asset!) } : {},
       ...language === undefined || language === '' ? {} : { language },
     }
+    pptActivity(task, task.stage!)
     this.tasks.set(task.id, task)
-    try { await this.persistPpt(task) } catch (error) { this.tasks.delete(task.id); throw error }
+    try { await this.persistPpt(task, true) } catch (error) { this.tasks.delete(task.id); throw error }
     this.pruneTasks()
     const job = this.enqueue(task, skill, inputs, request)
     // The caller polls the task; the job never rejects outward.
@@ -582,6 +597,7 @@ export class SkillRunner {
     if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') return false
     task.status = 'cancelled'
     task.stage = this.translate(task.language)('canvas.skills.stageCancelled')
+    pptActivity(task, task.stage, 'warning')
     task.finishedAt = Date.now()
     const canceller = this.cancellers.get(id)
     this.cancellers.delete(id)
@@ -604,12 +620,14 @@ export class SkillRunner {
           task.status = 'completed'
           task.stage = this.translate(task.language)('canvas.skills.stageDone')
           task.phase = undefined
+          pptActivity(task, task.stage, 'done')
         }
       } catch (error) {
         if (!cancelled()) {
           task.status = 'failed'
           task.error = messageOf(error)
           task.phase = undefined
+          pptActivity(task, this.translate(task.language)('ppt.activityFailed'), 'warning')
         }
       } finally {
         task.finishedAt = Date.now()
@@ -857,6 +875,7 @@ export class SkillRunner {
 
     task.stage = t('canvas.skills.stagePreparing')
     task.phase = 'preparing'
+    pptActivity(task, task.stage)
     // Materialize every input that resolves to a real asset, so the agent works
     // on ordinary files (its tools read paths, not canvas asset ids).
     const fileLines: string[] = []
@@ -883,6 +902,7 @@ export class SkillRunner {
     }
     if (fileLines.length === 0) throw new Error(t('canvas.skills.noInput'))
     task.stage = t('canvas.skills.stagePrepared', { count: fileLines.length })
+    pptActivity(task, task.stage)
 
     const skillName = this.heavySkillName(skill)
     const body = await this.loadSkillBody(skillName)
@@ -915,6 +935,7 @@ export class SkillRunner {
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       const sessionId = newId('skillagent')
       if (task.canvasId === 'ppt') { task.agentSessionId = sessionId; await this.persistPpt(task) }
+      pptActivity(task, t('ppt.activityAgent'))
       handle = await agents.create({
         sessionId,
         cwd: runDir,
@@ -934,16 +955,20 @@ export class SkillRunner {
       handle.followup(this.heavyUserPrompt(skill, skillName, inputDir, outputDir, body !== undefined, t))
       // The agent thinks for minutes on a deck pipeline; the only honest live
       // signal is what it has already written into the output directory.
-      const watch = this.watchOutputDir(task, outputDir, t)
+      const progress = task.canvasId === 'ppt' ? new PptProgressMonitor(task, handle.session, runDir, t) : undefined
+      progress?.start()
+      const watch = task.canvasId === 'ppt' ? undefined : this.watchOutputDir(task, outputDir, t)
       try {
         await handle.whenIdle()
       } finally {
-        watch.stop()
+        watch?.stop()
+        await progress?.stop()
       }
       controller.signal.throwIfAborted()
       if (cancelled()) throw new Error(t('canvas.skills.stageCancelled'))
       task.stage = t('canvas.skills.stageCollecting')
       task.phase = 'collecting'
+      pptActivity(task, task.stage)
       const failure = agentSessionFailure(handle.session)
       if (failure !== undefined) throw new Error(t('ppt.agentFailed', { error: failure }))
       const answer = lastAssistantText(handle.session.deriveMessages())

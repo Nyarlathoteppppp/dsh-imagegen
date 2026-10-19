@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.9.2'
+export const PLUGIN_VERSION = '1.9.3'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -548,10 +548,21 @@ export interface CanvasSkillOutput {
   warnings: string[]
 }
 
+export interface PptTaskProgress {
+  lastActivityAt: number
+  currentOperation?: string
+  upstreamStage?: string
+  pages?: Array<{ page: number; state: 'pending' | 'running' | 'validated' }>
+  events: Array<{ time: number; label: string; state: 'running' | 'done' | 'warning' }>
+}
+
 export interface CanvasSkillTask {
+  progress?: PptTaskProgress
   /** Trace identifiers for finding the corresponding host execution log. */
   agentSessionId?: string
   runDirectory?: string
+  /** History/checkpoint failure, separate from conversion success or failure. */
+  persistenceError?: string
   /** Standalone PPT conversions retain their ordered input thumbnails. */
   pptImages?: CanvasAssetRef[]
   id: string
