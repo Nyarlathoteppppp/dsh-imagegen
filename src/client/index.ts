@@ -56,6 +56,7 @@ export { autoRemoveBackground, compositeAnnotatedResult, containRect, cropRaster
 export { addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts, removeConversationAttachment } from './conversation-sync.ts'
 export { isPosterDocument, wrapPosterText } from '../poster.ts'
 export { paintPoster } from './poster-render.ts'
+export { imageRefsOf } from './image-toolview.tsx'
 export { sidebarEntryTestHooks } from './sidebar-entry.ts'
 
 /**

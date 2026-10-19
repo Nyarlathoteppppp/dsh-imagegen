@@ -40,7 +40,7 @@ import { setStorageSyncHandler, putObject, type StorageSyncConfig } from './stor
  */
 interface CanvasSkillAgent {
   readonly session: { deriveMessages: () => readonly unknown[]; readonly seq?: number; eventAt?: (seq: number) => unknown }
-  followup: (message: { id: string; role: 'user'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'plugin'; plugin: string } }) => void
+  followup: (message: { id: string; role: 'user'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'plugin:dsh-imagegen' } }) => void
   whenIdle: () => Promise<void>
   /** Durable cancellation cause; `user` is the canvas cancel button. */
   cancel: (cause: { kind: 'user' }) => void
@@ -209,7 +209,8 @@ export async function createCanvasSkillAgent(options: CanvasSkillAgentOptions): 
         id: `canvas-skill-${Date.now().toString(36)}`,
         role: 'user',
         content: [{ type: 'text', text: body }],
-        source: { kind: 'plugin', plugin: 'dsh-imagegen' },
+        // Native V4 rejects the retired { kind: 'plugin', plugin } wrapper.
+        source: { kind: 'plugin:dsh-imagegen' },
       })
     },
     whenIdle: async () => {
