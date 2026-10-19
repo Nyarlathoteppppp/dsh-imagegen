@@ -2966,7 +2966,12 @@ await check('C11h a heavy run composes its agent with the preset roster and a mo
         return {
           agent: {
             session: { deriveMessages: () => [] },
-            followup() { seen.delivered = true },
+            followup(message) {
+              // Match native V4 admission: the old wrapper must fail before any model call.
+              if (!message.source?.kind || message.source.kind === 'plugin') throw new Error('format v4 message requires a producer-owned source kind')
+              seen.message = message
+              seen.delivered = true
+            },
             async whenIdle() {},
             cancel(cause) { seen.cancelled = cause },
           },
@@ -2997,6 +3002,9 @@ await check('C11h a heavy run composes its agent with the preset roster and a mo
   // Driving the handle narrows the DSH agent to what a run needs.
   created.followup('go')
   assert.equal(seen.delivered, true)
+  assert.equal(seen.message.source.kind, 'plugin:dsh-imagegen')
+  assert.equal('plugin' in seen.message.source, false)
+  assert.equal(seen.message.content[0].text, 'go')
   created.cancel()
   assert.deepEqual(seen.cancelled, { kind: 'user' })
   await created.dispose()
@@ -4154,6 +4162,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const fetchStub = async (input, init) => {
     const path = String(input)
     requestPaths.push(path)
+    if (path.startsWith('/api/dsh-imagegen/agent-image?')) return { ok: true, blob: async () => new Blob([pngBytes], { type: 'image/png' }) }
     if (path.endsWith('/ppt/tasks')) return { ok: true, json: async () => ({ ok: true, tasks: pptClientTasks }) }
     if (path.endsWith('/canvas/skills/list')) return { ok: true, json: async () => ({ ok: true, skills: [], installed: ['image-to-editable-ppt'], agentAvailable: true, registryAvailable: true }) }
     if (path.endsWith('/canvas/skills/library')) return { ok: true, json: async () => ({ ok: true, library: { entries: [] } }) }
@@ -4451,6 +4460,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
       get src() { return this._src }
     },
     fetch: fetchStub,
+    URL: class extends URL { static createObjectURL() { return 'blob:image-toolview-smoke' } static revokeObjectURL() {} },
+    URLSearchParams,
     console,
   }
   // jsdom's window.window is a getter-only property; only plain-object
@@ -4479,8 +4490,8 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     },
     slots: {
       // The Web UI plugin group slot is already declared.
-      inject(key, callback) { callback(); return () => {} },
-      register(options) { registered.push(options); return () => {} },
+      inject(key, callback) { const result = callback(); if (result?.[Symbol.iterator]) for (const _dispose of result) {} return () => {} },
+      register(options, component) { registered.push({ ...options, component }); return () => {} },
     },
   }
   // react-dom (outer realm) reads the bare `window`/`document` globals at
@@ -4544,6 +4555,30 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   })
 
   exportsOf.apply(ctx)
+  // #46: modern Web shells keep the model content textual and forward UI meta.
+  const rawImage = { attachment_id: 'issue-46-image', media_type: 'image/png', bytes: pngBytes.length, width: 1, height: 1, name: 'chat-result.png' }
+  const toolBlock = { kind: 'tool-result', callId: 'call-image', isError: false, content: [{ type: 'text', text: JSON.stringify({ status: 'completed', message: 'done', images: [rawImage] }) }], meta: { images: [rawImage] } }
+  const refsOf = exportsOf.imageRefsOf
+  assert.equal(refsOf(toolBlock)[0].attachmentId, rawImage.attachment_id)
+  assert.equal(refsOf({ ...toolBlock, meta: undefined }).length, 1, 'existing JSON-only tool results remain visible on replay')
+  const directImage = { type: 'image', attachment: refsOf(toolBlock)[0] }
+  assert.equal(refsOf({ ...toolBlock, content: [directImage, ...toolBlock.content] }).length, 1, 'content and metadata refs are deduplicated')
+  assert.equal(refsOf({ ...toolBlock, isError: true }).length, 0)
+  assert.equal(refsOf({ phase: 'start' }).length, 0)
+  assert.equal(refsOf({ ...toolBlock, content: [], meta: { images: [{ ...rawImage, width: -1 }, null, {}] } }).length, 0)
+  const chatResultHost = jsdomDocument.createElement('div')
+  jsdomDocument.body.append(chatResultHost)
+  const chatResultRoot = moduleStubs['react-dom/client'].createRoot(chatResultHost)
+  for (const toolName of ['generate_image', 'edit_image', 'get_image_generation_task']) {
+    const registration = registered.find(row => row.name === 'tool.call.toolview' && row.key === toolName)
+    assert.ok(registration?.component, `${toolName} registers its real conversation renderer`)
+    chatResultRoot.render(react.createElement(registration.component, { key: toolName, sessionId: 'issue-46-other', toolName, callId: 'call-image', block: toolBlock }))
+    assert.ok(await waitUntil(() => chatResultHost.querySelector('img')?.getAttribute('src') === 'blob:image-toolview-smoke'), `${toolName} displays metadata-only generated images`)
+    assert.equal(chatResultHost.querySelectorAll('img').length, 1)
+    assert.equal(chatResultHost.querySelector('a')?.getAttribute('href'), 'blob:image-toolview-smoke')
+  }
+  chatResultRoot.unmount()
+  chatResultHost.remove()
   // In-app prompts must open Settings through its rendered dialog affordances
   // and select the image-generation section.
   const settingsTrigger = jsdomDocument.createElement('button')

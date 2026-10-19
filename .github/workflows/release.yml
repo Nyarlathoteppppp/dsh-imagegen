@@ -107,14 +107,14 @@ jobs:
           fi
           # npm may process a successful publish for several minutes.
           # Retry verification only; never repeat the publish operation here.
-          for attempt in {1..30}; do
+          for attempt in {1..90}; do
             if npm view "$package@$version" --json --prefer-online --registry=https://registry.npmjs.org > "$metadata"; then
               echo "Verified npm version: $package@$version"
               cat "$metadata"
               npm view "$package" dist-tags --json --prefer-online --registry=https://registry.npmjs.org
               exit 0
             fi
-            if [ "$attempt" -lt 30 ]; then sleep 10; fi
+            if [ "$attempt" -lt 90 ]; then sleep 10; fi
           done
           echo "Published version is not yet visible on the npm registry." >&2
           exit 1
