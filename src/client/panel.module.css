@@ -323,7 +323,10 @@ html[data-dsh-imagegen-active] [data-dsh-imagegen-sidebar-root] > :not([data-dsh
   min-height: 0;
   padding: 6px 4px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base);
+  background-color: Canvas;
+  background-image:
+    linear-gradient(var(--dsw-alias-bg-base, transparent), var(--dsw-alias-bg-base, transparent)),
+    linear-gradient(var(--dsw-alias-bg-layer-1, Canvas), var(--dsw-alias-bg-layer-1, Canvas));
 }
 
 html[data-dsh-imagegen-active] .sidebarHistoryHost {
@@ -382,7 +385,10 @@ html[data-dsh-imagegen-active] .sidebarHistoryHost {
   overflow: hidden;
   padding: 14px 16px 16px;
   gap: 10px;
-  background: var(--dsw-alias-bg-base);
+  background-color: Canvas;
+  background-image:
+    linear-gradient(var(--dsw-alias-bg-base, transparent), var(--dsw-alias-bg-base, transparent)),
+    linear-gradient(var(--dsw-alias-bg-layer-1, Canvas), var(--dsw-alias-bg-layer-1, Canvas));
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
 }

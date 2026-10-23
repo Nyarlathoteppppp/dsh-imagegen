@@ -4035,6 +4035,18 @@ await check('C14 editable poster recipes survive host saves without changing leg
   assert.deepEqual((await host.canvasStore.read(saved.id)).nodes[1].metadata.poster, poster, 'invalid saves do not corrupt the existing document')
 })
 
+await check('D4 history surfaces keep an opaque base when the host background alias is transparent (#53)', () => {
+  const source = readFileSync(new URL('../src/client/panel.module.css', import.meta.url), 'utf8')
+  for (const selector of ['.sidebarHistoryHost', '.panel']) {
+    const escapedSelector = selector.replace('.', '\\.')
+    const block = new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`).exec(source)?.[1]
+    assert.ok(block !== undefined, `${selector} has a dedicated background rule`)
+    assert.match(block, /background-color:\s*Canvas;/, `${selector} has an opaque system-color base`)
+    assert.match(block, /var\(--dsw-alias-bg-base,\s*transparent\)/, `${selector} tolerates the host base alias being unset`)
+    assert.match(block, /var\(--dsw-alias-bg-layer-1,\s*Canvas\)/, `${selector} has a lower theme/system fallback`)
+  }
+})
+
 // --------------- E. full client apply in jsdom (mounts the sidebar entry)
 await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async () => {
   const { JSDOM } = await import('jsdom')
@@ -4239,6 +4251,7 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   const previewRequests = []
   /** Every fetch path the client issued (debug aid for the canvas tools). */
   const requestPaths = []
+  let settingsDescribeResponses = 0
   let pptSubmissions = [], pptUploaded = [], pptClientTasks = []
   let updateInstallMode = 'cli'
   let updateApplyCalls = 0
@@ -4279,18 +4292,21 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     if (path.endsWith('/settings/describe')) {
       return {
         ok: true,
-        json: async () => ({
-          ok: true,
-          value: {
-            namespaces: [{
-              ns: 'dsh-imagegen',
-          value: configState,
-          revision: 0,
-          secrets: channelSecrets(),
-            }],
-            writable: true,
-          },
-        }),
+        json: async () => {
+          settingsDescribeResponses += 1
+          return {
+            ok: true,
+            value: {
+              namespaces: [{
+                ns: 'dsh-imagegen',
+                value: configState,
+                revision: 0,
+                secrets: channelSecrets(),
+              }],
+              writable: true,
+            },
+          }
+        },
       }
     }
     if (path.endsWith('/settings/mutate')) {
@@ -4650,6 +4666,16 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
   })
 
   exportsOf.apply(ctx)
+  await waitForSelector(jsdomDocument, '[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]')
+  assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-view]').length, 1, 'one client apply owns the studio root')
+  const sessionTab = jsdomDocument.querySelector('[data-dsh-imagegen-tab="session"]')
+  const imageTab = jsdomDocument.querySelector('[data-dsh-imagegen-tab="image"]')
+  for (let i = 0; i < 3; i += 1) {
+    imageTab.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+    sessionTab.dispatchEvent(new jsdomWindow.MouseEvent('click', { bubbles: true }))
+  }
+  await new Promise(resolve => setTimeout(resolve, 80))
+  assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-history-host] > [data-dsh-imagegen-history]').length, 1, 'switching between session and image view reuses one history portal')
   // #46: modern Web shells keep the model content textual and forward UI meta.
   const rawImage = { attachment_id: 'issue-46-image', media_type: 'image/png', bytes: pngBytes.length, width: 1, height: 1, name: 'chat-result.png' }
   const toolBlock = { kind: 'tool-result', callId: 'call-image', isError: false, content: [{ type: 'text', text: JSON.stringify({ status: 'completed', message: 'done', images: [rawImage] }) }], meta: { images: [rawImage] } }
@@ -5785,6 +5811,15 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     await new Promise(resolve => setTimeout(resolve, 30))
     assert.equal(pptView.hidden, true)
     assert.ok(view.querySelector('button[class*="generateButton"]'), 'normal generation remains available')
+
+    // Re-applying the client module to the same document must retire the
+    // previous React root before it portals history into the reused host.
+    const previousDescribeResponses = settingsDescribeResponses
+    exportsOf.apply(ctx)
+    assert.ok(await waitUntil(() => settingsDescribeResponses > previousDescribeResponses), 'the re-applied client loaded its settings scope')
+    await new Promise(resolve => setTimeout(resolve, 80))
+    assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-view]').length, 1, 're-applying the client does not leave multiple studio roots')
+    assert.equal(jsdomDocument.querySelectorAll('[data-dsh-imagegen-history-host] [data-dsh-imagegen-history]').length, 1, 're-applying the client does not duplicate the history portal')
 
   } catch (error) {
     console.error('Client regression:', error)
