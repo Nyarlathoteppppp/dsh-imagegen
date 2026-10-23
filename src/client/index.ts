@@ -34,6 +34,12 @@ import type { ConversationService } from './conversation-sync.ts'
 
 /** Locale namespace this plugin owns. */
 const NS = 'dsh-imagegen'
+/** One live client UI tree per document, even if the host re-applies this module. */
+const UI_MOUNT_LEASE_KEY = Symbol.for('dsh-imagegen.client-ui-lease')
+
+interface UiMountLease {
+  release(): void
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -185,7 +191,24 @@ export function apply(ctx: ClientContext): void {
   // the scope is still loading, the composition default is unknown, so nothing
   // mounts yet. Only an unavailable scope falls back to the default (enabled).
   let uiDisposer: (() => void) | undefined
+  let scopeDisposer: (() => void) | undefined
+  let uiLeaseReleased = false
+  let uiLease: UiMountLease
+  uiLease = {
+    release: () => {
+      if (uiLeaseReleased) return
+      uiLeaseReleased = true
+      scopeDisposer?.()
+      scopeDisposer = undefined
+      uiDisposer?.()
+      uiDisposer = undefined
+      if (Reflect.get(document, UI_MOUNT_LEASE_KEY) === uiLease) {
+        Reflect.deleteProperty(document, UI_MOUNT_LEASE_KEY)
+      }
+    },
+  }
   const mountUi = (): void => {
+    if (uiLeaseReleased) return
     if (uiDisposer !== undefined) return
     const controller = new ImageGenController()
     const api = new ImageGenApi()
@@ -231,13 +254,21 @@ export function apply(ctx: ClientContext): void {
     }
   }
   const syncEnabled = (): void => {
+    if (uiLeaseReleased) return
     const snapshot = scope.getSnapshot()
+    if (snapshot.status === 'loading') return
+    const activeLease = Reflect.get(document, UI_MOUNT_LEASE_KEY) as UiMountLease | undefined
+    if (activeLease !== uiLease) {
+      activeLease?.release()
+      Reflect.set(document, UI_MOUNT_LEASE_KEY, uiLease)
+    }
     const enabled = snapshot.status === 'ready'
       ? snapshot.value?.enabled ?? true
       : snapshot.status === 'unavailable'
     if (enabled) mountUi()
     else uiDisposer?.()
   }
-  scope.subscribe(syncEnabled)
+  scopeDisposer = scope.subscribe(syncEnabled)
   syncEnabled()
+  ctx.effect(() => () => { uiLease.release() }, 'dsh-imagegen: client UI mount')
 }
