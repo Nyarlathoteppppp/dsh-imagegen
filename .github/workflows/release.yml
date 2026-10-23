@@ -34,7 +34,9 @@ jobs:
       - name: Build distributable
         run: pnpm run build
       - name: Regression checks
-        run: node scripts/smoke.mjs
+        run: |
+          pnpm test
+          node scripts/smoke.mjs
       - name: Package and verify
         run: |
           mkdir -p dist

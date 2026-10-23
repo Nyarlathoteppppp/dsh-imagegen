@@ -34,11 +34,9 @@ import { AGENT_IMAGE_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, type Subscri
 import type { ImageGenConfig, ImageGenScope, ImageModelGroup } from './settings-scope.ts'
 import { imageModelOptions } from './settings-scope.ts'
 import { describeModel, promptCharLimit } from '../model-catalog.ts'
-import {
-  addConversationAttachments, conversationInput, createConversationDrafts, releaseConversationDrafts,
-  removeConversationAttachment, CHAT_IMAGE_EVENT,
-  type ChatImageEventDetail, type ConversationDraftAttachment, type ConversationService,
-} from './conversation-sync.ts'
+import { CHAT_IMAGE_EVENT, type ChatImageEventDetail, type ConversationService } from './conversation-sync.ts'
+import { useConversationImageAttachment } from './use-conversation-image-attachment.tsx'
+import { ConversationSessionPicker } from './ConversationSessionPicker.tsx'
 import { Select } from './Select.tsx'
 import css from './panel.module.css'
 
@@ -656,11 +654,27 @@ export function ImageGenPanel(props: {
   /** Compare selections are `${channelId}\0${model}` so duplicate aliases stay distinct. */
   const [compareModels, setCompareModels] = useState<string[]>([])
   const [images, setImages] = useState<GeneratedImage[]>([])
-  const [addingToConversation, setAddingToConversation] = useState<number | string | null>(null)
   const [galleryConversationAddingId, setGalleryConversationAddingId] = useState<string | null>(null)
   const [historyConversationAddingId, setHistoryConversationAddingId] = useState<string | null>(null)
   const [conversationMessage, setConversationMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const conversationAttachment = useConversationImageAttachment({
+    sessions,
+    conversation,
+    prompt,
+    prepareImage: prepareConversationImage,
+    attachImage: (sessionId, dataUrl, name) => api.attachConversationImage(sessionId, dataUrl, name),
+    messages: {
+      noSession: tt('conversation.noSession'),
+      unavailable: tt('conversation.unavailable'),
+      busy: tt('conversation.busy'),
+    },
+    onError: caught => { setError(errorMessage(caught)) },
+    onAdded: () => {
+      setConversationMessage(tt('conversation.added'))
+      window.setTimeout(() => { setConversationMessage(null) }, 2200)
+    },
+  })
   const editReferences = useEditReferences(setError)
   // Submission is brief; actual generation stays visible until the host
   // queue reports that every queued/running task has finished.
@@ -1600,51 +1614,8 @@ export function ImageGenPanel(props: {
     }
   }
 
-  /** Put a generated image into the native conversation composer. */
-  const addImageToConversation = async (image: GeneratedImage, index: number, actionKey: number | string = index): Promise<void> => {
-    if (addingToConversation !== null) return
-    if (conversation === undefined || sessions === undefined || currentSessionId === undefined) {
-      setError(tt('conversation.noSession'))
-      return
-    }
-    const sessionScope = sessions.scope(currentSessionId)
-    if (sessionScope === undefined) {
-      setError(tt('conversation.unavailable'))
-      return
-    }
-    setAddingToConversation(actionKey)
-    let attachments: readonly ConversationDraftAttachment[] = []
-    let added = false
-    try {
-      const prepared = await prepareConversationImage(image, index)
-      const file = prepared.file
-      // The draft verbs were renamed when the composer grew plain-file drafts;
-      // the bridge drives whichever pair the running shell exposes.
-      const created = createConversationDrafts(conversation, currentSessionId, [file])
-      if (created === undefined) throw new Error(tt('conversation.unavailable'))
-      attachments = created
-      const input = conversationInput(conversation.input.for(sessionScope))
-      const accepted = addConversationAttachments(input, attachments.map(attachment => attachment.id))
-      if (accepted === undefined) throw new Error(tt('conversation.unavailable'))
-      if (!accepted) throw new Error(tt('conversation.busy'))
-      added = true
-      try {
-        await api.attachConversationImage(String(currentSessionId), prepared.dataUrl, file.name)
-      } catch (caught) {
-        for (const attachment of attachments) removeConversationAttachment(input, attachment.id)
-        added = false
-        throw caught
-      }
-      if (input.state.getSnapshot().draft.trim() === '' && prompt.trim() !== '') input.setDraft(prompt.trim())
-      setConversationMessage(tt('conversation.added'))
-      window.setTimeout(() => { setConversationMessage(null) }, 2200)
-    } catch (caught) {
-      if (!added) releaseConversationDrafts(conversation, attachments)
-      setError(errorMessage(caught))
-    } finally {
-      setAddingToConversation(null)
-    }
-  }
+  /** Put a generated image into the current or explicitly selected conversation. */
+  const addImageToConversation = conversationAttachment.add
 
   /** Add one history entry's first image to the gallery (fetches it from the
    *  history image route, then delegates to addToGallery). */
@@ -1661,7 +1632,7 @@ export function ImageGenPanel(props: {
 
   /** Add one history entry's first image to the current chat draft. */
   const addHistoryEntryToConversation = async (entry: HistoryEntry): Promise<void> => {
-    if (historyConversationAddingId !== null || addingToConversation !== null || galleryConversationAddingId !== null || entry.images.length === 0) return
+    if (historyConversationAddingId !== null || conversationAttachment.busyKey !== null || conversationAttachment.pending !== null || galleryConversationAddingId !== null || entry.images.length === 0) return
     setHistoryConversationAddingId(entry.id)
     try {
       const [image] = await historyImagesToGenerated(entry.images.slice(0, 1))
@@ -1676,7 +1647,7 @@ export function ImageGenPanel(props: {
 
   /** Load a persisted gallery image and add it to the current chat draft. */
   const addGalleryEntryToConversation = async (entry: HistoryEntry): Promise<void> => {
-    if (galleryConversationAddingId !== null || addingToConversation !== null || entry.images.length === 0) return
+    if (galleryConversationAddingId !== null || conversationAttachment.busyKey !== null || conversationAttachment.pending !== null || entry.images.length === 0) return
     setGalleryConversationAddingId(entry.id)
     try {
       const [image] = await historyImagesToGenerated(entry.images.slice(0, 1))
@@ -1866,7 +1837,7 @@ export function ImageGenPanel(props: {
                 <span className={css.ecommerceTaskActions} onClick={event => event.stopPropagation()}>
                   <a className={css.ecommerceActionChip} href={srcOf(image)} download={`product-${item.slotKey || item.id}-${imageIndex + 1}.${extensionOf(image.mime)}`}>{tt('download')}</a>
                   <button type="button" className={css.ecommerceActionChip} disabled={galleryAdding} onClick={() => { void addToGallery(image) }}>{tt('gallery.add')}</button>
-                  <button type="button" className={css.ecommerceActionChip} disabled={conversationBusy} onClick={() => { void addImageToConversation(image, imageIndex, `${item.id}:${imageIndex}`) }}>{addingToConversation === `${item.id}:${imageIndex}` ? tt('conversation.adding') : tt('conversation.add')}</button>
+                  <button type="button" className={css.ecommerceActionChip} disabled={conversationBusy} onClick={() => { addImageToConversation(image, imageIndex, `${item.id}:${imageIndex}`) }}>{conversationAttachment.busyKey === `${item.id}:${imageIndex}` ? tt('conversation.adding') : tt('conversation.add')}</button>
                 </span>
               </figure>
             )) : (
@@ -1881,7 +1852,7 @@ export function ImageGenPanel(props: {
       </div>
     </section>
   )
-  const conversationBusy = addingToConversation !== null || galleryConversationAddingId !== null || historyConversationAddingId !== null
+  const conversationBusy = conversationAttachment.busyKey !== null || conversationAttachment.pending !== null || galleryConversationAddingId !== null || historyConversationAddingId !== null
   const viewingEntry = viewingHistoryId === null ? null : history.find(entry => entry.id === viewingHistoryId) ?? null
   const viewingGalleryEntry = galleryViewingId === null ? null : gallery.find(entry => entry.id === galleryViewingId) ?? null
   const previewImage = preview === null ? null : preview.images[preview.index] ?? null
@@ -2790,7 +2761,7 @@ export function ImageGenPanel(props: {
                             onClick={(event) => { event.stopPropagation(); void addGalleryEntryToConversation(entry) }}
                           >
                             <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
-                            {galleryConversationAddingId === entry.id || addingToConversation === `gallery:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
+                            {galleryConversationAddingId === entry.id || conversationAttachment.busyKey === `gallery:${entry.id}` ? tt('conversation.adding') : tt('conversation.add')}
                           </button>
                           <button
                             type="button"
@@ -3079,7 +3050,7 @@ export function ImageGenPanel(props: {
                         onClick={(event) => { event.stopPropagation(); void addImageToConversation(image, index) }}
                       >
                         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10v7H3z"/><path d="M5.5 2.5h5M8 6v4M6 8h4"/></svg>
-                        {addingToConversation === index ? tt('conversation.adding') : tt('conversation.add')}
+                        {conversationAttachment.busyKey === index ? tt('conversation.adding') : tt('conversation.add')}
                       </button>
                       <button type="button" className={css.pptAction} data-image-to-ppt="" onClick={event => { event.stopPropagation(); openPpt(image, index) }}>{tt('ppt.action')}</button>
                       <a
@@ -3219,8 +3190,8 @@ export function ImageGenPanel(props: {
               <div className={css.lightboxMeta}>
                 <span className={css.lightboxIndex}>{tt('preview.index', { index: preview.index + 1, total: preview.images.length })}</span>
                 <span className={css.lightboxActions}>
-                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { void addImageToConversation(previewImage, preview.index) }}>
-                    {addingToConversation === preview.index ? tt('conversation.adding') : tt('conversation.add')}
+                  <button type="button" className={css.lightboxEdit} disabled={conversationBusy} title={tt('conversation.addHint')} onClick={() => { addImageToConversation(previewImage, preview.index) }}>
+                    {conversationAttachment.busyKey === preview.index ? tt('conversation.adding') : tt('conversation.add')}
                   </button>
                   <button type="button" className={css.lightboxEdit} disabled={galleryAdding} onClick={() => { void addToGallery(previewImage) }}>
                     {tt('gallery.add')}
@@ -3245,6 +3216,22 @@ export function ImageGenPanel(props: {
         : null}
 
       {/* ------------------------------------------------- gallery toast */}
+      {conversationAttachment.pending !== null ? createPortal(
+        <ConversationSessionPicker
+          options={conversationAttachment.targets}
+          labels={{
+            title: tt('conversation.chooseSession'),
+            hint: tt('conversation.chooseSessionHint'),
+            target: tt('conversation.targetSession'),
+            placeholder: tt('conversation.selectSession'),
+            confirm: tt('conversation.confirmAdd'),
+            cancel: tt('conversation.cancel'),
+          }}
+          onSelect={conversationAttachment.selectTarget}
+          onCancel={conversationAttachment.cancelPicker}
+        />,
+        document.body,
+      ) : null}
       {galleryMessage !== null ? (
         <div className={css.galleryToast} role="status">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M8 5.8v4.4M5.8 8h4.4"/></svg>
