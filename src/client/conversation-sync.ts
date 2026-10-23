@@ -1,6 +1,7 @@
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ConversationController, IConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 
 /** Document event used to bridge chat tool results into the image workspace. */
 export const CHAT_IMAGE_EVENT = 'dsh-imagegen:chat-images'
@@ -52,6 +53,49 @@ export interface ConversationInput {
   removeAttachment?(id: string): boolean
   readonly state: { getSnapshot(): { readonly draft: string } }
   setDraft(text: string): void
+}
+
+/**
+ * Register an image through the host's complete composer and durable-edit path.
+ *
+ * @param options - target session, browser draft, composer, and durable staging API.
+ */
+export async function addConversationImageDraft(options: {
+  conversation: ConversationService
+  sessionId: SessionId
+  sessionScope: NonNullable<ReturnType<ISessions['scope']>>
+  file: File
+  dataUrl: string
+  name: string
+  prompt: string
+  attachImage: (sessionId: string, dataUrl: string, name: string) => Promise<void>
+  unavailableMessage: string
+  busyMessage: string
+}): Promise<void> {
+  const { conversation, sessionId, sessionScope, file, dataUrl, name, prompt, attachImage } = options
+  let attachments: readonly ConversationDraftAttachment[] = []
+  let added = false
+  try {
+    const created = createConversationDrafts(conversation, sessionId, [file])
+    if (created === undefined) throw new Error(options.unavailableMessage)
+    attachments = created
+    const input = conversationInput(conversation.input.for(sessionScope))
+    const accepted = addConversationAttachments(input, attachments.map(attachment => attachment.id))
+    if (accepted === undefined) throw new Error(options.unavailableMessage)
+    if (!accepted) throw new Error(options.busyMessage)
+    added = true
+    try {
+      await attachImage(String(sessionId), dataUrl, name)
+    } catch (error) {
+      for (const attachment of attachments) removeConversationAttachment(input, attachment.id)
+      added = false
+      throw error
+    }
+    if (input.state.getSnapshot().draft.trim() === '' && prompt.trim() !== '') input.setDraft(prompt.trim())
+  } catch (error) {
+    if (!added) releaseConversationDrafts(conversation, attachments)
+    throw error
+  }
 }
 
 /** Narrow one session input facade onto the verb pair this plugin drives. */
