@@ -817,6 +817,49 @@ await check('B7 Volcengine Seedream uses Ark size and URL response fields', asyn
   }
 })
 
+await check('B7b Seedream watermark opt-out only reaches official hosts (#56)', async () => {
+  const seen = []
+  const seedream = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/v1/images/generations') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      seen.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${seedream.address().port}/seedream.png` }] }))
+      return
+    }
+    if (url.pathname === '/seedream.png') {
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(pngBytes)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  await new Promise(resolve => seedream.listen(0, '127.0.0.1', resolve))
+  const base = { apiUrl: `http://127.0.0.1:${seedream.address().port}/v1`, apiKey: 'sk-seedream' }
+  const reference = `data:image/png;base64,${pngBytes.toString('base64')}`
+  const generation = { mode: 'text', model: 'doubao-seedream-5-0-pro-260628', prompt: 'x', size: '16:9', quality: '2k', n: 1, detail: '' }
+  try {
+    // Default on: the field is never sent, so upstream keeps its own default.
+    await host.generateImage(base, generation)
+    assert.equal(seen.at(-1).watermark, undefined, 'watermark stays absent unless the channel opts out')
+    // An explicit opt-out travels on the official model id.
+    await host.generateImage({ ...base, watermark: false }, generation)
+    assert.equal(seen.at(-1).watermark, false, 'generation sends watermark=false')
+    // Editing shares /images/generations, so the hand-built body must repeat it.
+    await host.generateImage({ ...base, watermark: false }, { ...generation, mode: 'edit', image: reference })
+    assert.equal(seen.at(-1).watermark, false, 'edit body repeats watermark=false')
+    assert.deepEqual(seen.at(-1).image, [reference], 'edit keeps its reference array intact')
+    // A third-party relay serving short Seedream ids keeps its original body.
+    await host.generateImage({ ...base, watermark: false }, { ...generation, model: 'seedream-5.0-pro' })
+    assert.equal(seen.at(-1).watermark, undefined, 'relays without the documented field never see watermark')
+  } finally {
+    await new Promise(resolve => seedream.close(resolve))
+  }
+})
+
 await check('B8 Zhipu GLM-Image uses the official generation contract', async () => {
   const seen = []
   const zhipu = createServer(async (req, res) => {
@@ -5148,6 +5191,14 @@ await check('E1 client apply mounts the sidebar entry and studio (jsdom)', async
     const initialSettings = face.hooks.imageGenSettingsCard.getSnapshot()
     assert.equal(initialSettings.channels.defaultModel, 'gpt-image-2-alt', 'settings select shows the configured default model')
     assert.equal(initialSettings.channels.channels[0].apiUrlFull, false, 'existing channels default to base-URL mode')
+    // #56: the Seedream watermark opt-out has to survive the settings round trip.
+    assert.notEqual(initialSettings.channels.channels[0].watermark, false, 'existing channels keep the Seedream watermark on')
+    face.channels.setChannels(initialSettings.channels.channels.map(channel => ({ ...channel, watermark: false })))
+    await face.channels.commit()
+    assert.ok(
+      mutateCalls.some(m => m.ops.some(o => o.path[0] === 'channels' && o.op === 'set' && o.value[0]?.watermark === false)),
+      'watermark opt-out reaches the channel settings document (#56)',
+    )
     face.channels.setChannels(initialSettings.channels.channels.map(channel => ({ ...channel, apiUrlFull: true })))
     await face.channels.commit()
     assert.ok(

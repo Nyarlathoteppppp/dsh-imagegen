@@ -8,7 +8,7 @@
 export const IMAGEGEN_SETTINGS_NAMESPACE = 'dsh-imagegen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '1.9.5'
+export const PLUGIN_VERSION = '1.10.0'
 
 /** Same-origin route family (loopback-only, mirroring the dsh-ssh fence). */
 export const SETTINGS_API = {
@@ -1079,6 +1079,13 @@ export interface ChannelConfig {
   apiUrl: string
   /** Use apiUrl verbatim instead of appending /images/generations or /images/edits. */
   apiUrlFull: boolean
+  /**
+   * Ask Seedream to stamp its「AI 生成」corner badge into the result. The official
+   * Volcengine Ark / BytePlus API defaults this to `true`, so absent means on;
+   * only an explicit `false` is sent upstream, and only to channels that
+   * document the field (#56).
+   */
+  watermark?: boolean
   /** Request protocol; 'auto' infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
   /** Authentication source; absent means the legacy API-key path. */

@@ -21,6 +21,8 @@ export interface UpstreamConfig {
   apiKey: string
   /** Use apiUrl verbatim as the generation endpoint instead of appending /images/*. */
   apiUrlFull?: boolean
+  /** Channel opt-out for Seedream's platform watermark; absent means on. */
+  watermark?: boolean
   /** Request protocol; auto infers chat-completions from an exact chat URL. */
   protocol?: ChannelProtocolPreference
   /** Channel display name, recorded in diagnostics so a failure maps to a settings row. */
@@ -157,6 +159,27 @@ function isGlmImage(model: string): boolean {
 /** Whether this is the official Volcengine Ark model naming convention. */
 function isVolcSeedream(model: string): boolean {
   return /^doubao-seedream(?:-|$)/i.test(model.trim())
+}
+
+/** Whether the channel points at an official ByteDance image host (Volcengine
+ *  Ark or BytePlus). Only these document Seedream's `watermark` field, so the
+ *  opt-out stays off third-party relays, which may reject unknown body fields
+ *  with a 400. */
+function isByteDanceImageHost(apiUrl: string): boolean {
+  try {
+    const host = new URL(apiUrl).hostname.toLowerCase()
+    return host.endsWith('volces.com') || host.endsWith('byteplus.com') || host.endsWith('bytepluses.com')
+  } catch {
+    return false
+  }
+}
+
+/** Whether Seedream's watermark switch may travel to this upstream: the
+ *  official model id (`doubao-seedream-…`) or any model on an official
+ *  ByteDance host. Model-name matching alone would miss the bundled Ark preset
+ *  (`seedream-5.0-pro`) and inference-endpoint aliases (#56). */
+function supportsSeedreamWatermark(model: string, upstream: UpstreamConfig): boolean {
+  return isVolcSeedream(model) || isByteDanceImageHost(upstream.apiUrl)
 }
 
 /** Volcengine uses `size` for the output tier, not the panel's aspect ratio. */
@@ -324,7 +347,7 @@ function clampCount(n: number): number {
 /** Pick the effective per-model request parameters. Never includes `n`: the
  *  batch parameter is rejected by Responses-API-based gateways (tools[0].n),
  *  so the count is satisfied by parallel single-image requests instead. */
-function effectiveParams(request: GenerateRequest): {
+function effectiveParams(request: GenerateRequest, upstream: UpstreamConfig): {
   model: string
   size?: string
   quality?: string
@@ -333,6 +356,7 @@ function effectiveParams(request: GenerateRequest): {
   image_size?: string
   resolution?: string
   response_format?: string
+  watermark?: boolean
 } {
   const model = wireModel(request)
   // dall-e-3 has no quality/detail knobs and only produces one image.
@@ -378,12 +402,15 @@ function effectiveParams(request: GenerateRequest): {
   // ByteDance Seedream: the official Volcengine Ark API uses `size` for the
   // resolution tier (1K / 2K), not the panel's aspect-ratio value. It returns
   // temporary URLs, so ask Ark for URL output and let the host download it.
-  // Other compatible gateways retain the base64 response fallback.
+  // Other compatible gateways retain the base64 response fallback. The
+  // platform watermark is on by default upstream; a channel may opt out, and
+  // the field is only ever sent on hosts that document it (#56).
   if (isSeedream(model)) {
     return {
       model,
       size: seedreamSize(request.quality),
       response_format: isVolcSeedream(model) ? 'url' : 'b64_json',
+      ...upstream.watermark === false && supportsSeedreamWatermark(model, upstream) ? { watermark: false } : {},
     }
   }
   // Zhipu's official image API accepts OpenAI-style JSON but uses its own
@@ -887,6 +914,9 @@ async function requestOneImage(
         ...params.size !== undefined ? { size: params.size } : {},
         ...params.resolution !== undefined ? { resolution: params.resolution } : {},
         response_format: isVolcSeedream(params.model) ? 'url' : 'b64_json',
+        // Editing shares this endpoint, so the watermark switch has to be
+        // repeated here: the body is built by hand, not spread from params.
+        ...params.watermark !== undefined ? { watermark: params.watermark } : {},
       })
     } else {
       const form = new FormData()
@@ -1401,7 +1431,7 @@ export async function generateImage(upstream: UpstreamConfig, request: GenerateR
       throw new ImageGenError('智谱 GLM-Image 当前仅支持文生图，请切换到文生图模式或选择支持图生图的模型', 'edit-unsupported')
     }
   }
-  const params = effectiveParams(request)
+  const params = effectiveParams(request, upstream)
   const count = effectiveCount(request)
   const batches = await Promise.all(
     Array.from({ length: count }, () => requestOneImage(baseUrl, upstream, request, params, options.signal)),

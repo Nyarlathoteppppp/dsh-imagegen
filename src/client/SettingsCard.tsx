@@ -19,7 +19,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import { CardForm, booleanField, secretField, textField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 import { ChannelsForm, type ChannelDraft, type ChannelsFormActions, type ChannelsFormState } from './channels-form.ts'
 import type { ImageGenScope } from './settings-scope.ts'
-import { describeModel } from '../model-catalog.ts'
+import { describeModel, modelFamily } from '../model-catalog.ts'
 import { IMAGE_MODEL_API, PRESETS_API, PROMPT_ENHANCE_API, USAGE_API, CANVAS_SKILL_API, SUBSCRIPTION_API, SUBSCRIPTION_PROVIDERS, SUBSCRIPTION_PROVIDER_DISPLAY_NAMES, DEFAULT_SUBSCRIPTION_MODELS, EXPERIMENTAL_SUBSCRIPTION_PROVIDERS, isChatCompletionsUrl, isSubscriptionProvider, resolveChannelProtocol, type ModelMapping, type PresetProviderView, type SubscriptionProvider } from '../protocol.ts'
 import type { ImageGenKey } from './locales.ts'
 import { tt, type TranslateValues } from './helpers.ts'
@@ -1122,10 +1122,17 @@ function newChannelDraft(preset: PresetProviderView | undefined): ChannelDraft {
     name: preset?.name ?? '',
     apiUrl: preset?.apiUrl ?? '',
     apiUrlFull: false,
+    watermark: true,
     protocol: 'auto',
     ...preset?.subscription === undefined ? {} : { auth: 'subscription' as const, subscription: preset.subscription },
     models: (preset?.models ?? []).map(model => ({ ...model })),
   }
+}
+
+/** Whether a channel's catalog targets Seedream, the only family whose platform
+ *  watermark the panel can switch off (#56). */
+function catalogHasSeedream(models: ModelMapping[]): boolean {
+  return models.some(model => modelFamily(model.id.trim() === '' ? model.alias : model.id) === 'seedream')
 }
 
 function addCustomChannel(channels: ChannelDraft[], form: ChannelsFormActions, openEditor: (id: string) => void): void {
@@ -1432,6 +1439,13 @@ function ChannelEditor(props: {
           <span>{t('channels.apiUrlFull')}</span>
         </label>
         {channel.apiUrlFull ? <p className={css.fieldHint}>{t('channels.apiUrlFullHint')}</p> : null}
+        {catalogHasSeedream(channel.models) ? <>
+          <label className={css.checkboxRow}>
+            <input type="checkbox" checked={channel.watermark !== false} disabled={!props.writable} onChange={event => { props.onPatch({ watermark: event.target.checked }) }} />
+            <span>{t('channels.watermark')}</span>
+          </label>
+          <p className={css.fieldHint}>{t('channels.watermarkHint')}</p>
+        </> : null}
         <div className={css.editorField}>
           <div className={css.head}>
             <label className={css.label} htmlFor="dsh-imagegen-channel-key">{t('channels.apiKey')}</label>

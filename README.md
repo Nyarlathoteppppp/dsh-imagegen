@@ -126,6 +126,7 @@ dsh plugin --profile web add @dickpy/dsh-imagegen
 - One-API、New API、LiteLLM 等只暴露 `/chat/completions` 的网关，可填写完整接口地址并选择对应模型。
 - API 密钥保存在 DSH 宿主设置中；未被自动识别的兼容模型可手动添加。
 - 不同服务商的图生图、尺寸与返回格式可能不同，请确认所选模型实际支持的能力。
+- 火山方舟 / BytePlus 的 Seedream 默认在图片右下角叠加「AI 生成」角标；渠道编辑里的「图片添加「AI 生成」水印」可关闭，关闭后请求体透传 `watermark: false`。该角标属于生成合成内容标识，关闭后的对外发布标注义务由使用者承担。
 
 </details>
 
@@ -161,6 +162,8 @@ pnpm run build
 pnpm run watch
 node scripts/smoke.mjs
 ```
+
+冒烟测试会把数据根目录重定向到临时目录，不会写入你的 `~/.dsh/dsh-imagegen`。
 
 本地打包并安装到 DSH 验收：
 

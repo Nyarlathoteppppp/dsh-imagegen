@@ -56,7 +56,7 @@ export class ImageGenerationRuntime {
     }
     const result = channel.auth === 'subscription' && channel.subscription !== undefined
       ? { images: await this.generateSubscription(channel.subscription, request, signal) }
-      : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name } satisfies UpstreamConfig, request, { signal })
+      : await generateImage({ apiUrl: channel.apiUrl, apiKey: channel.apiKey, apiUrlFull: channel.apiUrlFull, protocol: channel.protocol, channelName: channel.name, ...channel.watermark === false ? { watermark: false } : {} } satisfies UpstreamConfig, request, { signal })
     try {
       const history = await this.history.append({
         id: randomUUID(),
